@@ -111,13 +111,13 @@ git --version
 When the repository is available publicly, it can be cloned using:
 
 ```bash
-git clone https://github.com/YOUR-USERNAME/aider-git-aware-coding-assistant.git
+git clone https://github.com/SuheilAltraikey01/AgenticAI-project-aider-git-aware-coding-assistant.git
 ```
 
 Then enter the project directory:
 
 ```bash
-cd aider-git-aware-coding-assistant
+cd AgenticAI-project-aider-git-aware-coding-assistant
 ```
 
 ### Create a Virtual Environment
@@ -539,17 +539,3 @@ The project follows the following safety boundaries:
 - Human approval is required before applying generated changes to the working repository.
 - Execution traces are retained for audit and evaluation.
 
----
-
-## Academic Use and AI Assistance
-
-AI tools may be used during development in accordance with the module requirements.
-
-The final report will include an AI-use declaration describing:
-
-- which AI tools were used;
-- what they were used for;
-- how generated suggestions were checked;
-- how the final implementation was verified.
-
-The student remains responsible for understanding and explaining all submitted code, design decisions, tests, and evaluation results.
