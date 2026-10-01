@@ -466,8 +466,8 @@ The project is an academic prototype inspired by Aider and does not attempt to r
 ## Project Roadmap
 
 - [x] Phase 0 - GitHub repository and initial README
-- [ ] Phase 1 - Python project structure and environment
-- [ ] Phase 2 - Staged Git diff reader
+- [x] Phase 1 - Python project structure and environment
+- [x] Phase 2 - Staged Git diff reader
 - [ ] Phase 3 - Offline Git reader tests
 - [ ] Phase 4 - Agent state and LangGraph workflow
 - [ ] Phase 5 - DeepSeek integration
