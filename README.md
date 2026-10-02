@@ -470,7 +470,7 @@ The project is an academic prototype inspired by Aider and does not attempt to r
 - [x] Phase 2 - Staged Git diff reader
 - [x] Phase 3 - Offline Git reader tests
 - [x] Phase 4 - Agent state and LangGraph workflow
-- [ ] Phase 5 - DeepSeek integration
+- [x] Phase 5 - DeepSeek integration
 - [ ] Phase 6 - Offline fake LLM provider
 - [ ] Phase 7 - Risk and test-gap analysis
 - [ ] Phase 8 - Candidate test generation
@@ -539,3 +539,18 @@ The project follows the following safety boundaries:
 - Human approval is required before applying generated changes to the working repository.
 - Execution traces are retained for audit and evaluation.
 
+### LLM Provider
+
+The project currently uses DeepSeek through an OpenAI-compatible API.
+
+The DeepSeek integration is isolated behind an LLM client abstraction.
+The agent does not give the model direct access to Git, files, tests,
+commit, or push operations.
+
+### LLM Provider Change
+
+The original project proposal named Claude as the planned LLM provider.
+
+During implementation, the provider was changed to DeepSeek.
+The agent architecture, Git safety boundaries, evaluation goals,
+and human-oversight design remain unchanged.
