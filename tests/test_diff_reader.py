@@ -1,21 +1,22 @@
 from pathlib import Path
 
+import pytest
 from git import Repo
 
 from aider_agent.git.diff_reader import GitDiffReader
 
 
 def create_test_repository(tmp_path: Path) -> Repo:
-    """Create a temporary local Git repository for testing."""
+    """Create a temporary Git repository for testing."""
 
     repo = Repo.init(tmp_path)
 
-    # Local identity is used only inside this temporary test repository.
     with repo.config_writer() as config:
         config.set_value("user", "name", "Test User")
         config.set_value("user", "email", "test@example.com")
 
     sample_file = tmp_path / "sample.py"
+
     sample_file.write_text(
         "def add(a, b):\n"
         "    return a + b\n",
@@ -29,19 +30,24 @@ def create_test_repository(tmp_path: Path) -> Repo:
 
 
 def test_get_staged_files(tmp_path):
-    """The reader should return files added to the Git staging area."""
+    """The reader should return files currently staged for commit."""
 
     repo = create_test_repository(tmp_path)
 
-    sample_file = tmp_path / "sample.py"
-    sample_file.write_text(
-        "def add(a, b):\n"
-        "    result = a + b\n"
-        "    return result\n",
-        encoding="utf-8",
-    )
+    try:
+        sample_file = tmp_path / "sample.py"
 
-    repo.index.add(["sample.py"])
+        sample_file.write_text(
+            "def add(a, b):\n"
+            "    result = a + b\n"
+            "    return result\n",
+            encoding="utf-8",
+        )
+
+        repo.index.add(["sample.py"])
+
+    finally:
+        repo.close()
 
     reader = GitDiffReader(tmp_path)
 
@@ -51,19 +57,24 @@ def test_get_staged_files(tmp_path):
 
 
 def test_get_staged_diff(tmp_path):
-    """The reader should return the actual staged code changes."""
+    """The reader should return the staged code changes."""
 
     repo = create_test_repository(tmp_path)
 
-    sample_file = tmp_path / "sample.py"
-    sample_file.write_text(
-        "def add(a, b):\n"
-        "    result = a + b\n"
-        "    return result\n",
-        encoding="utf-8",
-    )
+    try:
+        sample_file = tmp_path / "sample.py"
 
-    repo.index.add(["sample.py"])
+        sample_file.write_text(
+            "def add(a, b):\n"
+            "    result = a + b\n"
+            "    return result\n",
+            encoding="utf-8",
+        )
+
+        repo.index.add(["sample.py"])
+
+    finally:
+        repo.close()
 
     reader = GitDiffReader(tmp_path)
 
@@ -76,9 +87,19 @@ def test_get_staged_diff(tmp_path):
 def test_no_staged_changes(tmp_path):
     """The reader should return empty results when nothing is staged."""
 
-    create_test_repository(tmp_path)
+    repo = create_test_repository(tmp_path)
+    repo.close()
 
     reader = GitDiffReader(tmp_path)
 
     assert reader.get_staged_files() == []
     assert reader.get_staged_diff() == ""
+
+
+def test_invalid_repository(tmp_path):
+    """The reader should raise a clear error for a non-Git directory."""
+
+    reader = GitDiffReader(tmp_path)
+
+    with pytest.raises(ValueError, match="Not a valid Git repository"):
+        reader.get_staged_diff()
