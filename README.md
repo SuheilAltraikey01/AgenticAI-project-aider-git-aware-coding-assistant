@@ -468,7 +468,7 @@ The project is an academic prototype inspired by Aider and does not attempt to r
 - [x] Phase 0 - GitHub repository and initial README
 - [x] Phase 1 - Python project structure and environment
 - [x] Phase 2 - Staged Git diff reader
-- [ ] Phase 3 - Offline Git reader tests
+- [x] Phase 3 - Offline Git reader tests
 - [ ] Phase 4 - Agent state and LangGraph workflow
 - [ ] Phase 5 - DeepSeek integration
 - [ ] Phase 6 - Offline fake LLM provider
