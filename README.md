@@ -372,15 +372,19 @@ The developer remains responsible for the final Git decision.
 ---
 
 ## 10. Repository Map
+## Repository Map
 
-Current repository structure:
+The repository is organized into separate Git, agent workflow, and LLM
+components so that each part can be tested independently. The automated
+test suite remains offline and does not require a real API key or
+external network access.
 
-```text
+
 aider-git-aware-coding-assistant/
 |
 |-- README.md
-|   Project description, setup instructions, usage, evaluation,
-|   approval gate, and limitations.
+|   Project description, setup instructions, usage, architecture,
+|   evaluation plan, approval gate, roadmap, and limitations.
 |
 |-- requirements.txt
 |   Python dependencies with pinned versions.
@@ -389,56 +393,96 @@ aider-git-aware-coding-assistant/
 |   Example environment configuration with dummy values.
 |
 |-- .gitignore
-|   Files that must not be committed, including .env and
-|   the local virtual environment.
+|   Files that must not be committed, including .env,
+|   local virtual environments, caches, and generated traces.
+|
+|-- pytest.ini
+|   Pytest configuration, including the source path
+|   and test discovery settings.
 |
 |-- src/
 |   Main source code.
 |   |
 |   `-- aider_agent/
-|       Python package containing the agent implementation.
+|       Main Python package for the agent implementation.
+|       |
+|       |-- __init__.py
+|       |   Package initialization file.
+|       |
+|       |-- config.py
+|       |   Loads environment configuration such as the LLM provider,
+|       |   model name, and DeepSeek API key.
+|       |
+|       |-- git/
+|       |   Git-related functionality.
+|       |   |
+|       |   |-- __init__.py
+|       |   |   Git package initialization file.
+|       |   |
+|       |   `-- diff_reader.py
+|       |       Reads staged Git files and staged diffs without
+|       |       modifying the repository.
+|       |
+|       |-- agent/
+|       |   LangGraph agent workflow components.
+|       |   |
+|       |   |-- __init__.py
+|       |   |   Agent package initialization file.
+|       |   |
+|       |   |-- state.py
+|       |   |   Defines the shared AgentState used across
+|       |   |   the workflow.
+|       |   |
+|       |   `-- graph.py
+|       |       Builds the LangGraph workflow, including Git reading,
+|       |       routing, and workflow termination.
+|       |
+|       `-- llm/
+|           LLM provider abstraction and implementations.
+|           |
+|           |-- __init__.py
+|           |   LLM package initialization file.
+|           |
+|           |-- base.py
+|           |   Defines the common LlmClient interface used by
+|           |   both real and fake LLM providers.
+|           |
+|           |-- deepseek_client.py
+|           |   Real DeepSeek API implementation using the
+|           |   OpenAI-compatible interface.
+|           |
+|           `-- fake_client.py
+|               Offline deterministic LLM implementation used
+|               for testing without an API key or network access.
 |
 `-- tests/
-    Automated project tests that run without an API key
+    Automated project tests that run without a real API key
     or external network access.
-```
-
-Planned later structure:
-
-```text
-src/aider_agent/
-|
-|-- agent/
-|   Agent state, workflow, and controller.
-|
-|-- git/
-|   Git staged-diff reading tools.
-|
-|-- llm/
-|   DeepSeek and offline fake LLM clients.
-|
-|-- testing/
-|   Candidate test generation and execution.
-|
-|-- sandbox/
-|   Isolated execution environment.
-|
-|-- approval/
-|   Human approval gate.
-|
-`-- trace/
-    Execution-trace persistence.
-
-evaluation/
-|
-|-- cases/
-|   Reproducible evaluation cases.
-|
-`-- run_evaluation.py
-    Evaluation harness.
-```
-
-The repository map will be updated when these directories are introduced.
+    |
+    |-- __init__.py
+    |   Test package initialization file.
+    |
+    |-- test_setup.py
+    |   Verifies that the Python project and test environment work.
+    |
+    |-- test_diff_reader.py
+    |   Tests staged Git file and diff reading using temporary
+    |   local Git repositories.
+    |
+    |-- test_agent_graph.py
+    |   Tests LangGraph routing for staged changes and
+    |   no-change scenarios.
+    |
+    |-- test_config.py
+    |   Tests application configuration and API key validation.
+    |
+    |-- test_deepseek_client.py
+    |   Tests DeepSeek client configuration without making
+    |   a real network request.
+    |
+    `-- test_fake_llm_client.py
+        Tests the offline FakeLlmClient, predefined responses,
+        prompt recording, and response exhaustion behavior.
 
 ---
 
