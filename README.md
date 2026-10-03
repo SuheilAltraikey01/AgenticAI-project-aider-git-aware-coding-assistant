@@ -379,7 +379,7 @@ components so that each part can be tested independently. The automated
 test suite remains offline and does not require a real API key or
 external network access.
 
-
+```text
 aider-git-aware-coding-assistant/
 |
 |-- README.md
@@ -485,6 +485,7 @@ aider-git-aware-coding-assistant/
         prompt recording, and response exhaustion behavior.
 
 ---
+```
 
 ## 11. Limitations
 
