@@ -471,7 +471,7 @@ The project is an academic prototype inspired by Aider and does not attempt to r
 - [x] Phase 3 - Offline Git reader tests
 - [x] Phase 4 - Agent state and LangGraph workflow
 - [x] Phase 5 - DeepSeek integration
-- [ ] Phase 6 - Offline fake LLM provider
+- [x] Phase 6 - Offline fake LLM provider
 - [ ] Phase 7 - Risk and test-gap analysis
 - [ ] Phase 8 - Candidate test generation
 - [ ] Phase 9 - Isolated pytest execution
@@ -554,3 +554,15 @@ The original project proposal named Claude as the planned LLM provider.
 During implementation, the provider was changed to DeepSeek.
 The agent architecture, Git safety boundaries, evaluation goals,
 and human-oversight design remain unchanged.
+
+### Offline LLM Testing
+
+The automated test suite does not require a real LLM API key or
+external network access.
+
+A `FakeLlmClient` implements the same `generate()` interface used by
+the real DeepSeek client. It returns predefined responses and records
+the prompts it receives.
+
+This allows agent behavior to be tested deterministically without
+calling an external model provider.
