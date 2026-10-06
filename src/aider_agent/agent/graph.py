@@ -1,15 +1,24 @@
 from langgraph.graph import END, START, StateGraph
 
 from aider_agent.agent.state import AgentState
+from aider_agent.analysis.risk_analyzer import RiskAnalyzer
 from aider_agent.git.diff_reader import GitDiffReader
+from aider_agent.llm.base import LlmClient
 
 
-def read_git_changes(state: AgentState) -> dict:
-    """Read staged files and the staged diff from the repository."""
+def read_git_changes(
+    state: AgentState,
+) -> dict:
+    """Read staged files and staged diff from the repository."""
 
-    repository_path = state.get("repository_path", ".")
+    repository_path = state.get(
+        "repository_path",
+        ".",
+    )
 
-    reader = GitDiffReader(repository_path)
+    reader = GitDiffReader(
+        repository_path
+    )
 
     staged_files = reader.get_staged_files()
     staged_diff = reader.get_staged_diff()
@@ -21,8 +30,10 @@ def read_git_changes(state: AgentState) -> dict:
     }
 
 
-def route_after_git_read(state: AgentState) -> str:
-    """Choose the next workflow step after reading Git changes."""
+def route_after_git_read(
+    state: AgentState,
+) -> str:
+    """Choose the next workflow step after reading Git."""
 
     if state.get("staged_files"):
         return "prepare_analysis"
@@ -30,32 +41,85 @@ def route_after_git_read(state: AgentState) -> str:
     return "no_changes"
 
 
-def prepare_analysis(state: AgentState) -> dict:
-    """Mark staged changes as ready for future LLM analysis."""
+def prepare_analysis(
+    state: AgentState,
+) -> dict:
+    """Mark staged changes as ready for LLM analysis."""
 
-    staged_files = state.get("staged_files", [])
+    staged_files = state.get(
+        "staged_files",
+        [],
+    )
 
     return {
         "status": "ready_for_analysis",
         "message": (
-            f"{len(staged_files)} staged file(s) are ready for analysis."
+            f"{len(staged_files)} staged file(s) "
+            "are ready for analysis."
         ),
     }
 
 
-def no_changes(state: AgentState) -> dict:
-    """Finish the workflow when no staged changes are available."""
+def no_changes(
+    state: AgentState,
+) -> dict:
+    """Stop the workflow when no staged changes exist."""
 
     return {
         "status": "no_changes",
-        "message": "No staged Git changes were found.",
+        "message": (
+            "No staged Git changes were found."
+        ),
     }
 
 
-def build_agent_graph():
-    """Build and compile the initial agent workflow."""
+def build_agent_graph(
+    llm_client: LlmClient,
+):
+    """Build and compile the agent workflow."""
 
-    builder = StateGraph(AgentState)
+    risk_analyzer = RiskAnalyzer(
+        llm_client
+    )
+
+    def analyze_risk(
+        state: AgentState,
+    ) -> dict:
+        """Analyze staged changes for risk and test gaps."""
+
+        analysis = risk_analyzer.analyze(
+            staged_files=state.get(
+                "staged_files",
+                [],
+            ),
+            staged_diff=state.get(
+                "staged_diff",
+                "",
+            ),
+        )
+
+        return {
+            "risk_level": analysis[
+                "risk_level"
+            ],
+            "risky_files": analysis[
+                "risky_files"
+            ],
+            "test_gaps": analysis[
+                "test_gaps"
+            ],
+            "analysis_summary": analysis[
+                "summary"
+            ],
+            "status": "analysis_complete",
+            "message": (
+                "Risk and test-gap analysis completed."
+            ),
+        }
+
+    builder = StateGraph(
+        AgentState
+    )
 
     builder.add_node(
         "read_git_changes",
@@ -65,6 +129,11 @@ def build_agent_graph():
     builder.add_node(
         "prepare_analysis",
         prepare_analysis,
+    )
+
+    builder.add_node(
+        "analyze_risk",
+        analyze_risk,
     )
 
     builder.add_node(
@@ -88,6 +157,11 @@ def build_agent_graph():
 
     builder.add_edge(
         "prepare_analysis",
+        "analyze_risk",
+    )
+
+    builder.add_edge(
+        "analyze_risk",
         END,
     )
 

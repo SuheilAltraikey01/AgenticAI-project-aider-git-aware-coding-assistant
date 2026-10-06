@@ -436,7 +436,16 @@ aider-git-aware-coding-assistant/
 |       |   `-- graph.py
 |       |       Builds the LangGraph workflow, including Git reading,
 |       |       routing, and workflow termination.
-|       |
+|       |-- analysis/
+|       |   Risk and test-gap analysis components.
+|       |   |
+|       |   |-- __init__.py
+|       |   |   Analysis package initialization file.
+|       |   |
+|       |   `-- risk_analyzer.py
+|       |       Builds the code-review prompt, calls the configured
+|       |       LLM provider, parses structured JSON, and validates
+|       |       risk and missing-test information.
 |       `-- llm/
 |           LLM provider abstraction and implementations.
 |           |
@@ -481,6 +490,9 @@ aider-git-aware-coding-assistant/
     |   a real network request.
     |
     `-- test_fake_llm_client.py
+    |-- test_risk_analyzer.py
+    |   Tests structured risk analysis, prompt construction,
+    |   invalid JSON handling, and risk-level validation.   
         Tests the offline FakeLlmClient, predefined responses,
         prompt recording, and response exhaustion behavior.
 
@@ -517,7 +529,7 @@ The project is an academic prototype inspired by Aider and does not attempt to r
 - [x] Phase 4 - Agent state and LangGraph workflow
 - [x] Phase 5 - DeepSeek integration
 - [x] Phase 6 - Offline fake LLM provider
-- [ ] Phase 7 - Risk and test-gap analysis
+- [x] Phase 7 - Risk and test-gap analysis
 - [ ] Phase 8 - Candidate test generation
 - [ ] Phase 9 - Isolated pytest execution
 - [ ] Phase 10 - Bounded retry and replanning loop

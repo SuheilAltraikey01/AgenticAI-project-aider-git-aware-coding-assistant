@@ -9,5 +9,10 @@ class AgentState(TypedDict, total=False):
     staged_files: list[str]
     staged_diff: str
 
+    risk_level: str
+    risky_files: list[str]
+    test_gaps: list[str]
+    analysis_summary: str
+
     status: str
     message: str

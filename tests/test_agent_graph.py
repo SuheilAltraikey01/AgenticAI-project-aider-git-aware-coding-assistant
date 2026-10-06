@@ -3,23 +3,47 @@ from pathlib import Path
 from git import Repo
 
 from aider_agent.agent.graph import build_agent_graph
+from aider_agent.llm.fake_client import FakeLlmClient
 
 
-def create_test_repository(tmp_path: Path) -> None:
-    """Create a temporary Git repository with one committed file."""
+FAKE_ANALYSIS = """
+{
+  "risk_level": "medium",
+  "risky_files": ["sample.py"],
+  "test_gaps": [
+    "No test covers the modified calculation."
+  ],
+  "summary": "The calculation logic changed."
+}
+""".strip()
 
-    repo = Repo.init(tmp_path)
+
+def create_test_repository(
+    tmp_path: Path,
+) -> None:
+    """Create a temporary Git repository."""
+
+    repo = Repo.init(
+        tmp_path
+    )
 
     try:
         with repo.config_writer() as config:
-            config.set_value("user", "name", "Test User")
+            config.set_value(
+                "user",
+                "name",
+                "Test User",
+            )
+
             config.set_value(
                 "user",
                 "email",
                 "test@example.com",
             )
 
-        sample_file = tmp_path / "sample.py"
+        sample_file = (
+            tmp_path / "sample.py"
+        )
 
         sample_file.write_text(
             "def add(a, b):\n"
@@ -27,17 +51,26 @@ def create_test_repository(tmp_path: Path) -> None:
             encoding="utf-8",
         )
 
-        repo.index.add(["sample.py"])
-        repo.index.commit("Initial commit")
+        repo.index.add(
+            ["sample.py"]
+        )
+
+        repo.index.commit(
+            "Initial commit"
+        )
 
     finally:
         repo.close()
 
 
-def stage_test_change(tmp_path: Path) -> None:
+def stage_test_change(
+    tmp_path: Path,
+) -> None:
     """Modify and stage the sample file."""
 
-    sample_file = tmp_path / "sample.py"
+    sample_file = (
+        tmp_path / "sample.py"
+    )
 
     sample_file.write_text(
         "def add(a, b):\n"
@@ -46,61 +79,111 @@ def stage_test_change(tmp_path: Path) -> None:
         encoding="utf-8",
     )
 
-    repo = Repo(tmp_path)
+    repo = Repo(
+        tmp_path
+    )
 
     try:
-        repo.index.add(["sample.py"])
+        repo.index.add(
+            ["sample.py"]
+        )
 
     finally:
         repo.close()
 
 
-def test_graph_stops_when_no_changes_are_staged(tmp_path):
-    """The workflow should stop when there are no staged changes."""
+def test_graph_stops_when_no_changes_are_staged(
+    tmp_path,
+):
+    """No changes should stop before calling the LLM."""
 
-    create_test_repository(tmp_path)
+    create_test_repository(
+        tmp_path
+    )
 
-    graph = build_agent_graph()
+    client = FakeLlmClient(
+        responses=[]
+    )
+
+    graph = build_agent_graph(
+        client
+    )
 
     result = graph.invoke(
         {
-            "repository_path": str(tmp_path),
+            "repository_path": str(
+                tmp_path
+            )
         }
     )
-
-    assert result["status"] == "no_changes"
-    assert result["staged_files"] == []
-    assert result["staged_diff"] == ""
 
     assert (
-        result["message"]
-        == "No staged Git changes were found."
+        result["status"]
+        == "no_changes"
     )
 
+    assert (
+        result["staged_files"]
+        == []
+    )
 
-def test_graph_routes_staged_changes_to_analysis(tmp_path):
-    """The workflow should route staged changes toward analysis."""
+    assert client.calls == []
 
-    create_test_repository(tmp_path)
-    stage_test_change(tmp_path)
 
-    graph = build_agent_graph()
+def test_graph_analyzes_staged_changes(
+    tmp_path,
+):
+    """Staged changes should reach the risk-analysis node."""
+
+    create_test_repository(
+        tmp_path
+    )
+
+    stage_test_change(
+        tmp_path
+    )
+
+    client = FakeLlmClient(
+        responses=[
+            FAKE_ANALYSIS
+        ]
+    )
+
+    graph = build_agent_graph(
+        client
+    )
 
     result = graph.invoke(
         {
-            "repository_path": str(tmp_path),
+            "repository_path": str(
+                tmp_path
+            )
         }
     )
 
-    assert result["status"] == "ready_for_analysis"
+    assert (
+        result["status"]
+        == "analysis_complete"
+    )
 
-    assert result["staged_files"] == [
+    assert (
+        result["risk_level"]
+        == "medium"
+    )
+
+    assert result["risky_files"] == [
         "sample.py"
     ]
 
-    assert "result = a + b" in result["staged_diff"]
+    assert len(
+        result["test_gaps"]
+    ) == 1
 
     assert (
-        result["message"]
-        == "1 staged file(s) are ready for analysis."
+        result["analysis_summary"]
+        == "The calculation logic changed."
     )
+
+    assert len(
+        client.calls
+    ) == 1
