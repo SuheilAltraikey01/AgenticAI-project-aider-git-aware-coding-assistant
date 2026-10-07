@@ -446,6 +446,16 @@ aider-git-aware-coding-assistant/
 |       |       Builds the code-review prompt, calls the configured
 |       |       LLM provider, parses structured JSON, and validates
 |       |       risk and missing-test information.
+|       |   Analysis and candidate-generation components.
+|       |   |
+|       |   |-- __init__.py
+|       |   |
+|       |   |-- risk_analyzer.py
+|       |   |   Analyzes staged changes for risk and missing tests.
+|       |   |
+|       |   `-- candidate_test_generator.py
+|       |       Generates structured pytest candidates for identified
+|       |       test gaps without writing them to the real repository.
 |       `-- llm/
 |           LLM provider abstraction and implementations.
 |           |
@@ -493,8 +503,11 @@ aider-git-aware-coding-assistant/
     |-- test_risk_analyzer.py
     |   Tests structured risk analysis, prompt construction,
     |   invalid JSON handling, and risk-level validation.   
-        Tests the offline FakeLlmClient, predefined responses,
-        prompt recording, and response exhaustion behavior.
+    |   Tests the offline FakeLlmClient, predefined responses,
+    |   prompt recording, and response exhaustion behavior.
+    `-- test_candidate_test_generator.py
+    |   Tests candidate generation, prompt construction, JSON validation,
+    |   safe test paths, and path-traversal rejection.  
 
 ---
 ```
@@ -530,7 +543,7 @@ The project is an academic prototype inspired by Aider and does not attempt to r
 - [x] Phase 5 - DeepSeek integration
 - [x] Phase 6 - Offline fake LLM provider
 - [x] Phase 7 - Risk and test-gap analysis
-- [ ] Phase 8 - Candidate test generation
+- [x] Phase 8 - Candidate test generation
 - [ ] Phase 9 - Isolated pytest execution
 - [ ] Phase 10 - Bounded retry and replanning loop
 - [ ] Phase 11 - Human approval gate
@@ -623,3 +636,14 @@ the prompts it receives.
 
 This allows agent behavior to be tested deterministically without
 calling an external model provider.
+
+### Generated Test Safety
+
+Candidate tests are generated as structured data only.
+
+During this stage, generated tests are not written into the developer's
+working repository and are not executed. Candidate file paths are
+validated and must remain inside the `tests/` directory.
+
+Execution of generated tests is handled separately in an isolated
+environment in a later phase.

@@ -1,6 +1,9 @@
 from langgraph.graph import END, START, StateGraph
 
 from aider_agent.agent.state import AgentState
+from aider_agent.analysis.candidate_test_generator import (
+    CandidateTestGenerator,
+)
 from aider_agent.analysis.risk_analyzer import RiskAnalyzer
 from aider_agent.git.diff_reader import GitDiffReader
 from aider_agent.llm.base import LlmClient
@@ -20,8 +23,13 @@ def read_git_changes(
         repository_path
     )
 
-    staged_files = reader.get_staged_files()
-    staged_diff = reader.get_staged_diff()
+    staged_files = (
+        reader.get_staged_files()
+    )
+
+    staged_diff = (
+        reader.get_staged_diff()
+    )
 
     return {
         "staged_files": staged_files,
@@ -33,9 +41,11 @@ def read_git_changes(
 def route_after_git_read(
     state: AgentState,
 ) -> str:
-    """Choose the next workflow step after reading Git."""
+    """Choose the next step after Git inspection."""
 
-    if state.get("staged_files"):
+    if state.get(
+        "staged_files"
+    ):
         return "prepare_analysis"
 
     return "no_changes"
@@ -44,7 +54,7 @@ def route_after_git_read(
 def prepare_analysis(
     state: AgentState,
 ) -> dict:
-    """Mark staged changes as ready for LLM analysis."""
+    """Mark staged changes as ready for risk analysis."""
 
     staged_files = state.get(
         "staged_files",
@@ -60,15 +70,43 @@ def prepare_analysis(
     }
 
 
+def route_after_analysis(
+    state: AgentState,
+) -> str:
+    """Decide whether candidate tests should be generated."""
+
+    if state.get(
+        "test_gaps"
+    ):
+        return "generate_candidate_tests"
+
+    return "no_test_gaps"
+
+
 def no_changes(
     state: AgentState,
 ) -> dict:
-    """Stop the workflow when no staged changes exist."""
+    """Stop when no staged Git changes exist."""
 
     return {
         "status": "no_changes",
         "message": (
             "No staged Git changes were found."
+        ),
+    }
+
+
+def no_test_gaps(
+    state: AgentState,
+) -> dict:
+    """Finish when analysis finds no test gaps."""
+
+    return {
+        "candidate_tests": [],
+        "status": "analysis_complete",
+        "message": (
+            "Risk analysis completed and "
+            "no test gaps were identified."
         ),
     }
 
@@ -82,20 +120,28 @@ def build_agent_graph(
         llm_client
     )
 
+    test_generator = (
+        CandidateTestGenerator(
+            llm_client
+        )
+    )
+
     def analyze_risk(
         state: AgentState,
     ) -> dict:
-        """Analyze staged changes for risk and test gaps."""
+        """Analyze staged changes for risks and test gaps."""
 
-        analysis = risk_analyzer.analyze(
-            staged_files=state.get(
-                "staged_files",
-                [],
-            ),
-            staged_diff=state.get(
-                "staged_diff",
-                "",
-            ),
+        analysis = (
+            risk_analyzer.analyze(
+                staged_files=state.get(
+                    "staged_files",
+                    [],
+                ),
+                staged_diff=state.get(
+                    "staged_diff",
+                    "",
+                ),
+            )
         )
 
         return {
@@ -117,6 +163,51 @@ def build_agent_graph(
             ),
         }
 
+    def generate_candidate_tests(
+        state: AgentState,
+    ) -> dict:
+        """Generate candidate tests for identified test gaps."""
+
+        result = (
+            test_generator.generate(
+                staged_files=state.get(
+                    "staged_files",
+                    [],
+                ),
+                staged_diff=state.get(
+                    "staged_diff",
+                    "",
+                ),
+                test_gaps=state.get(
+                    "test_gaps",
+                    [],
+                ),
+                risk_level=state.get(
+                    "risk_level",
+                    "low",
+                ),
+                analysis_summary=state.get(
+                    "analysis_summary",
+                    "",
+                ),
+            )
+        )
+
+        candidate_tests = (
+            result[
+                "candidate_tests"
+            ]
+        )
+
+        return {
+            "candidate_tests": candidate_tests,
+            "status": "candidate_tests_generated",
+            "message": (
+                f"{len(candidate_tests)} candidate "
+                "test(s) generated."
+            ),
+        }
+
     builder = StateGraph(
         AgentState
     )
@@ -134,6 +225,16 @@ def build_agent_graph(
     builder.add_node(
         "analyze_risk",
         analyze_risk,
+    )
+
+    builder.add_node(
+        "generate_candidate_tests",
+        generate_candidate_tests,
+    )
+
+    builder.add_node(
+        "no_test_gaps",
+        no_test_gaps,
     )
 
     builder.add_node(
@@ -160,8 +261,24 @@ def build_agent_graph(
         "analyze_risk",
     )
 
-    builder.add_edge(
+    builder.add_conditional_edges(
         "analyze_risk",
+        route_after_analysis,
+        {
+            "generate_candidate_tests":
+                "generate_candidate_tests",
+            "no_test_gaps":
+                "no_test_gaps",
+        },
+    )
+
+    builder.add_edge(
+        "generate_candidate_tests",
+        END,
+    )
+
+    builder.add_edge(
+        "no_test_gaps",
         END,
     )
 

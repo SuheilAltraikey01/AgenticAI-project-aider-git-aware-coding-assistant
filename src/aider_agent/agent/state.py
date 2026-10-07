@@ -14,5 +14,7 @@ class AgentState(TypedDict, total=False):
     test_gaps: list[str]
     analysis_summary: str
 
+    candidate_tests: list[dict]
+
     status: str
     message: str

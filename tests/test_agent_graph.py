@@ -18,14 +18,26 @@ FAKE_ANALYSIS = """
 """.strip()
 
 
+FAKE_CANDIDATE_TESTS = """
+{
+  "candidate_tests": [
+    {
+      "file_path": "tests/test_sample.py",
+      "target_file": "sample.py",
+      "rationale": "Covers the modified calculation.",
+      "code": "def test_add():\\n    assert True"
+    }
+  ]
+}
+""".strip()
+
+
 def create_test_repository(
     tmp_path: Path,
 ) -> None:
-    """Create a temporary Git repository."""
+    """Create a temporary Git repository with one committed file."""
 
-    repo = Repo.init(
-        tmp_path
-    )
+    repo = Repo.init(tmp_path)
 
     try:
         with repo.config_writer() as config:
@@ -41,9 +53,7 @@ def create_test_repository(
                 "test@example.com",
             )
 
-        sample_file = (
-            tmp_path / "sample.py"
-        )
+        sample_file = tmp_path / "sample.py"
 
         sample_file.write_text(
             "def add(a, b):\n"
@@ -68,9 +78,7 @@ def stage_test_change(
 ) -> None:
     """Modify and stage the sample file."""
 
-    sample_file = (
-        tmp_path / "sample.py"
-    )
+    sample_file = tmp_path / "sample.py"
 
     sample_file.write_text(
         "def add(a, b):\n"
@@ -79,9 +87,7 @@ def stage_test_change(
         encoding="utf-8",
     )
 
-    repo = Repo(
-        tmp_path
-    )
+    repo = Repo(tmp_path)
 
     try:
         repo.index.add(
@@ -95,7 +101,7 @@ def stage_test_change(
 def test_graph_stops_when_no_changes_are_staged(
     tmp_path,
 ):
-    """No changes should stop before calling the LLM."""
+    """No staged changes should stop before calling the LLM."""
 
     create_test_repository(
         tmp_path
@@ -127,13 +133,22 @@ def test_graph_stops_when_no_changes_are_staged(
         == []
     )
 
+    assert (
+        result["staged_diff"]
+        == ""
+    )
+
+    # The LLM must not be called when there are no staged changes.
     assert client.calls == []
 
 
 def test_graph_analyzes_staged_changes(
     tmp_path,
 ):
-    """Staged changes should reach the risk-analysis node."""
+    """
+    Staged changes should be analyzed and candidate tests
+    should be generated when test gaps are found.
+    """
 
     create_test_repository(
         tmp_path
@@ -145,7 +160,99 @@ def test_graph_analyzes_staged_changes(
 
     client = FakeLlmClient(
         responses=[
-            FAKE_ANALYSIS
+            FAKE_ANALYSIS,
+            FAKE_CANDIDATE_TESTS,
+        ]
+    )
+
+    graph = build_agent_graph(
+        client
+    )
+
+    result = graph.invoke(
+        {
+            "repository_path": str(
+                tmp_path
+            )
+        }
+    )
+
+    assert (
+        result["status"]
+        == "candidate_tests_generated"
+    )
+
+    assert (
+        result["risk_level"]
+        == "medium"
+    )
+
+    assert (
+        result["risky_files"]
+        == ["sample.py"]
+    )
+
+    assert (
+        result["test_gaps"]
+        == [
+            "No test covers the modified calculation."
+        ]
+    )
+
+    assert (
+        result["analysis_summary"]
+        == "The calculation logic changed."
+    )
+
+    assert len(
+        result["candidate_tests"]
+    ) == 1
+
+    assert (
+        result["candidate_tests"][0]["file_path"]
+        == "tests/test_sample.py"
+    )
+
+    assert (
+        result["candidate_tests"][0]["target_file"]
+        == "sample.py"
+    )
+
+    # Call 1 = risk analysis
+    # Call 2 = candidate test generation
+    assert len(
+        client.calls
+    ) == 2
+
+
+def test_graph_skips_generation_when_no_test_gaps(
+    tmp_path,
+):
+    """
+    The workflow should stop after analysis when
+    no missing tests are identified.
+    """
+
+    create_test_repository(
+        tmp_path
+    )
+
+    stage_test_change(
+        tmp_path
+    )
+
+    no_gap_analysis = """
+    {
+      "risk_level": "low",
+      "risky_files": [],
+      "test_gaps": [],
+      "summary": "The change is already adequately tested."
+    }
+    """.strip()
+
+    client = FakeLlmClient(
+        responses=[
+            no_gap_analysis
         ]
     )
 
@@ -167,23 +274,11 @@ def test_graph_analyzes_staged_changes(
     )
 
     assert (
-        result["risk_level"]
-        == "medium"
+        result["candidate_tests"]
+        == []
     )
 
-    assert result["risky_files"] == [
-        "sample.py"
-    ]
-
-    assert len(
-        result["test_gaps"]
-    ) == 1
-
-    assert (
-        result["analysis_summary"]
-        == "The calculation logic changed."
-    )
-
+    # Only risk analysis should have called the LLM.
     assert len(
         client.calls
     ) == 1
