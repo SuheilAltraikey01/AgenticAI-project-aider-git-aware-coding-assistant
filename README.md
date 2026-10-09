@@ -473,7 +473,20 @@ aider-git-aware-coding-assistant/
 |           `-- fake_client.py
 |               Offline deterministic LLM implementation used
 |               for testing without an API key or network access.
-|
+|       |-- execution/
+|       |   Candidate-test execution components.
+|       |   |
+|       |   |-- __init__.py
+|       |   |
+|       |   |-- base.py
+|       |   |   Defines the common TestRunner interface and
+|       |   |   structured execution result.
+|       |   |
+|       |   `-- pytest_runner.py
+|       |       Exports the staged Git snapshot into a temporary
+|       |       directory, writes candidate tests only inside the
+|       |       sandbox, runs pytest with a timeout, captures the
+|       |       result, and deletes the sandbox afterwards.
 `-- tests/
     Automated project tests that run without a real API key
     or external network access.
@@ -508,7 +521,9 @@ aider-git-aware-coding-assistant/
     `-- test_candidate_test_generator.py
     |   Tests candidate generation, prompt construction, JSON validation,
     |   safe test paths, and path-traversal rejection.  
-
+    |-- test_pytest_runner.py
+    |   Tests passing and failing candidate execution,
+    |   filesystem isolation, timeout behavior, and unsafe-path rejection.  
 ---
 ```
 
@@ -544,7 +559,7 @@ The project is an academic prototype inspired by Aider and does not attempt to r
 - [x] Phase 6 - Offline fake LLM provider
 - [x] Phase 7 - Risk and test-gap analysis
 - [x] Phase 8 - Candidate test generation
-- [ ] Phase 9 - Isolated pytest execution
+- [x] Phase 9 - Isolated pytest execution
 - [ ] Phase 10 - Bounded retry and replanning loop
 - [ ] Phase 11 - Human approval gate
 - [ ] Phase 12 - JSON execution traces
@@ -647,3 +662,19 @@ validated and must remain inside the `tests/` directory.
 
 Execution of generated tests is handled separately in an isolated
 environment in a later phase.
+### Candidate Test Execution Safety
+
+Generated tests are never executed directly inside the developer's
+working repository.
+
+The runner exports the staged Git snapshot into a disposable temporary
+directory, writes candidate tests only inside that directory, executes
+pytest with a fixed timeout, captures the result, and deletes the
+temporary directory afterwards.
+
+LLM API secrets are removed from the test subprocess environment.
+
+This design provides filesystem and process separation, but it is not a
+complete operating-system security sandbox and does not itself guarantee
+network isolation. Stronger container-based isolation remains a future
+hardening step.

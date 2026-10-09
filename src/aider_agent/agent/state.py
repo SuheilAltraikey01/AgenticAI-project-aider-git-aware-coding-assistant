@@ -16,5 +16,11 @@ class AgentState(TypedDict, total=False):
 
     candidate_tests: list[dict]
 
+    test_success: bool
+    test_exit_code: int | None
+    test_stdout: str
+    test_stderr: str
+    test_timed_out: bool
+
     status: str
     message: str

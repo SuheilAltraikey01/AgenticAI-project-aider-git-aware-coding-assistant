@@ -5,6 +5,8 @@ from aider_agent.analysis.candidate_test_generator import (
     CandidateTestGenerator,
 )
 from aider_agent.analysis.risk_analyzer import RiskAnalyzer
+from aider_agent.execution.base import TestRunner
+from aider_agent.execution.pytest_runner import PytestSandboxRunner
 from aider_agent.git.diff_reader import GitDiffReader
 from aider_agent.llm.base import LlmClient
 
@@ -23,13 +25,8 @@ def read_git_changes(
         repository_path
     )
 
-    staged_files = (
-        reader.get_staged_files()
-    )
-
-    staged_diff = (
-        reader.get_staged_diff()
-    )
+    staged_files = reader.get_staged_files()
+    staged_diff = reader.get_staged_diff()
 
     return {
         "staged_files": staged_files,
@@ -43,9 +40,7 @@ def route_after_git_read(
 ) -> str:
     """Choose the next step after Git inspection."""
 
-    if state.get(
-        "staged_files"
-    ):
+    if state.get("staged_files"):
         return "prepare_analysis"
 
     return "no_changes"
@@ -75,9 +70,7 @@ def route_after_analysis(
 ) -> str:
     """Decide whether candidate tests should be generated."""
 
-    if state.get(
-        "test_gaps"
-    ):
+    if state.get("test_gaps"):
         return "generate_candidate_tests"
 
     return "no_test_gaps"
@@ -113,6 +106,7 @@ def no_test_gaps(
 
 def build_agent_graph(
     llm_client: LlmClient,
+    test_runner: TestRunner | None = None,
 ):
     """Build and compile the agent workflow."""
 
@@ -120,10 +114,14 @@ def build_agent_graph(
         llm_client
     )
 
-    test_generator = (
-        CandidateTestGenerator(
-            llm_client
-        )
+    test_generator = CandidateTestGenerator(
+        llm_client
+    )
+
+    runner = (
+        test_runner
+        if test_runner is not None
+        else PytestSandboxRunner()
     )
 
     def analyze_risk(
@@ -131,17 +129,15 @@ def build_agent_graph(
     ) -> dict:
         """Analyze staged changes for risks and test gaps."""
 
-        analysis = (
-            risk_analyzer.analyze(
-                staged_files=state.get(
-                    "staged_files",
-                    [],
-                ),
-                staged_diff=state.get(
-                    "staged_diff",
-                    "",
-                ),
-            )
+        analysis = risk_analyzer.analyze(
+            staged_files=state.get(
+                "staged_files",
+                [],
+            ),
+            staged_diff=state.get(
+                "staged_diff",
+                "",
+            ),
         )
 
         return {
@@ -168,36 +164,32 @@ def build_agent_graph(
     ) -> dict:
         """Generate candidate tests for identified test gaps."""
 
-        result = (
-            test_generator.generate(
-                staged_files=state.get(
-                    "staged_files",
-                    [],
-                ),
-                staged_diff=state.get(
-                    "staged_diff",
-                    "",
-                ),
-                test_gaps=state.get(
-                    "test_gaps",
-                    [],
-                ),
-                risk_level=state.get(
-                    "risk_level",
-                    "low",
-                ),
-                analysis_summary=state.get(
-                    "analysis_summary",
-                    "",
-                ),
-            )
+        result = test_generator.generate(
+            staged_files=state.get(
+                "staged_files",
+                [],
+            ),
+            staged_diff=state.get(
+                "staged_diff",
+                "",
+            ),
+            test_gaps=state.get(
+                "test_gaps",
+                [],
+            ),
+            risk_level=state.get(
+                "risk_level",
+                "low",
+            ),
+            analysis_summary=state.get(
+                "analysis_summary",
+                "",
+            ),
         )
 
-        candidate_tests = (
-            result[
-                "candidate_tests"
-            ]
-        )
+        candidate_tests = result[
+            "candidate_tests"
+        ]
 
         return {
             "candidate_tests": candidate_tests,
@@ -206,6 +198,61 @@ def build_agent_graph(
                 f"{len(candidate_tests)} candidate "
                 "test(s) generated."
             ),
+        }
+
+    def execute_candidate_tests(
+        state: AgentState,
+    ) -> dict:
+        """Execute generated candidate tests inside the sandbox."""
+
+        result = runner.run(
+            repository_path=state.get(
+                "repository_path",
+                ".",
+            ),
+            candidate_tests=state.get(
+                "candidate_tests",
+                [],
+            ),
+        )
+
+        if result["timed_out"]:
+            status = "tests_timed_out"
+            message = (
+                "Candidate test execution exceeded "
+                "the time limit."
+            )
+
+        elif result["success"]:
+            status = "tests_passed"
+            message = (
+                "Candidate tests completed successfully."
+            )
+
+        else:
+            status = "tests_failed"
+            message = (
+                "Candidate tests completed with failures."
+            )
+
+        return {
+            "test_success": result[
+                "success"
+            ],
+            "test_exit_code": result[
+                "exit_code"
+            ],
+            "test_stdout": result[
+                "stdout"
+            ],
+            "test_stderr": result[
+                "stderr"
+            ],
+            "test_timed_out": result[
+                "timed_out"
+            ],
+            "status": status,
+            "message": message,
         }
 
     builder = StateGraph(
@@ -230,6 +277,11 @@ def build_agent_graph(
     builder.add_node(
         "generate_candidate_tests",
         generate_candidate_tests,
+    )
+
+    builder.add_node(
+        "execute_candidate_tests",
+        execute_candidate_tests,
     )
 
     builder.add_node(
@@ -274,6 +326,11 @@ def build_agent_graph(
 
     builder.add_edge(
         "generate_candidate_tests",
+        "execute_candidate_tests",
+    )
+
+    builder.add_edge(
+        "execute_candidate_tests",
         END,
     )
 
