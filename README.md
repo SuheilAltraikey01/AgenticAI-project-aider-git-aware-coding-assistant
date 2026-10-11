@@ -372,168 +372,264 @@ The developer remains responsible for the final Git decision.
 ---
 
 ## 10. Repository Map
-## Repository Map
 
-The repository is organized into separate Git, agent workflow, and LLM
-components so that each part can be tested independently. The automated
-test suite remains offline and does not require a real API key or
-external network access.
-
-```text
-aider-git-aware-coding-assistant/
+AgenticAI-project-aider-git-aware-coding-assistant/
 |
 |-- README.md
-|   Project description, setup instructions, usage, architecture,
-|   evaluation plan, approval gate, roadmap, and limitations.
+|   Main project documentation including setup, architecture,
+|   workflow, safety controls, evaluation plan, repository map,
+|   limitations, and development roadmap.
 |
 |-- requirements.txt
-|   Python dependencies with pinned versions.
+|   Pinned Python dependencies required to run and test the project.
 |
 |-- .env.example
-|   Example environment configuration with dummy values.
+|   Example environment configuration using dummy values only.
+|   Documents the required LLM provider, model, and API key variables.
 |
 |-- .gitignore
-|   Files that must not be committed, including .env,
-|   local virtual environments, caches, and generated traces.
+|   Prevents secrets, virtual environments, caches, IDE files,
+|   generated traces, and other local files from being committed.
 |
 |-- pytest.ini
-|   Pytest configuration, including the source path
-|   and test discovery settings.
+|   Pytest configuration including the src/ Python path and tests/
+|   discovery directory.
 |
 |-- src/
-|   Main source code.
-|   |
 |   `-- aider_agent/
-|       Main Python package for the agent implementation.
 |       |
 |       |-- __init__.py
-|       |   Package initialization file.
+|       |   Marks aider_agent as a Python package.
 |       |
 |       |-- config.py
-|       |   Loads environment configuration such as the LLM provider,
-|       |   model name, and DeepSeek API key.
+|       |   Loads environment settings and validates the configured
+|       |   DeepSeek API key and model configuration.
 |       |
 |       |-- git/
-|       |   Git-related functionality.
+|       |   Git inspection components.
 |       |   |
 |       |   |-- __init__.py
-|       |   |   Git package initialization file.
 |       |   |
 |       |   `-- diff_reader.py
-|       |       Reads staged Git files and staged diffs without
-|       |       modifying the repository.
+|       |       Reads staged Git files and staged diffs in read-only
+|       |       mode without committing or pushing changes.
 |       |
 |       |-- agent/
-|       |   LangGraph agent workflow components.
+|       |   LangGraph workflow and shared agent state.
 |       |   |
 |       |   |-- __init__.py
-|       |   |   Agent package initialization file.
 |       |   |
 |       |   |-- state.py
-|       |   |   Defines the shared AgentState used across
-|       |   |   the workflow.
+|       |   |   Defines the shared AgentState used across workflow
+|       |   |   nodes, including Git context, analysis results,
+|       |   |   candidate tests, execution results, retry state,
+|       |   |   approval state, and applied files.
 |       |   |
 |       |   `-- graph.py
-|       |       Builds the LangGraph workflow, including Git reading,
-|       |       routing, and workflow termination.
-|       |-- analysis/
-|       |   Risk and test-gap analysis components.
+|       |       Builds the bounded LangGraph workflow.
+|       |
+|       |       Current workflow:
+|       |
+|       |       staged Git changes
+|       |              |
+|       |              v
+|       |       risk/test-gap analysis
+|       |              |
+|       |              v
+|       |       candidate test generation
+|       |              |
+|       |              v
+|       |       isolated pytest execution
+|       |              |
+|       |        +-----+-----+
+|       |        |           |
+|       |       PASS        FAIL
+|       |        |           |
+|       |        |           v
+|       |        |       replanning
+|       |        |           |
+|       |        |           v
+|       |        |       retry test
+|       |        |           |
+|       |        |     max 3 retries
+|       |        |           |
+|       |        v           v
+|       |   human approval  stop/escalate
+|       |        |
+|       |   +----+----+
+|       |   |         |
+|       | approve    reject
+|       |   |         |
+|       |   v         v
+|       | apply      END
+|       | candidate
+|       | tests
+|       |   |
+|       |   v
+|       |  END
+|       |
+|       |-- llm/
+|       |   LLM provider abstraction and implementations.
 |       |   |
 |       |   |-- __init__.py
-|       |   |   Analysis package initialization file.
 |       |   |
-|       |   `-- risk_analyzer.py
-|       |       Builds the code-review prompt, calls the configured
-|       |       LLM provider, parses structured JSON, and validates
-|       |       risk and missing-test information.
-|       |   Analysis and candidate-generation components.
+|       |   |-- base.py
+|       |   |   Defines the common LlmClient protocol used by the
+|       |   |   agent instead of coupling workflow code directly
+|       |   |   to one provider.
+|       |   |
+|       |   |-- deepseek_client.py
+|       |   |   Real DeepSeek API client used for live risk analysis,
+|       |   |   candidate test generation, and replanning.
+|       |   |
+|       |   `-- fake_client.py
+|       |       Deterministic offline LLM implementation used by tests
+|       |       so the automated test suite requires no API or network.
+|       |
+|       |-- analysis/
+|       |   LLM-assisted reasoning and candidate-generation components.
 |       |   |
 |       |   |-- __init__.py
 |       |   |
 |       |   |-- risk_analyzer.py
-|       |   |   Analyzes staged changes for risk and missing tests.
+|       |   |   Analyzes the staged Git diff for risk, risky files,
+|       |   |   missing test coverage, and a structured summary.
+|       |   |   Treats staged code and comments as untrusted input.
 |       |   |
-|       |   `-- candidate_test_generator.py
-|       |       Generates structured pytest candidates for identified
-|       |       test gaps without writing them to the real repository.
-|       |-- test_replanner.py
-|       |   Uses pytest failure observations to generate revised
-|       |   candidate tests after an unsuccessful execution.
-|       `-- llm/
-|           LLM provider abstraction and implementations.
-|           |
-|           |-- __init__.py
-|           |   LLM package initialization file.
-|           |
-|           |-- base.py
-|           |   Defines the common LlmClient interface used by
-|           |   both real and fake LLM providers.
-|           |
-|           |-- deepseek_client.py
-|           |   Real DeepSeek API implementation using the
-|           |   OpenAI-compatible interface.
-|           |
-|           `-- fake_client.py
-|               Offline deterministic LLM implementation used
-|               for testing without an API key or network access.
+|       |   |-- candidate_test_generator.py
+|       |   |   Generates structured pytest candidate tests from
+|       |   |   identified test gaps and validates generated paths
+|       |   |   before they are accepted by the workflow.
+|       |   |
+|       |   `-- test_replanner.py
+|       |       Uses previous candidate tests together with pytest
+|       |       stdout, stderr, timeout status, and Git context to
+|       |       generate revised tests after a failed execution.
+|       |
 |       |-- execution/
 |       |   Candidate-test execution components.
 |       |   |
 |       |   |-- __init__.py
 |       |   |
 |       |   |-- base.py
-|       |   |   Defines the common TestRunner interface and
-|       |   |   structured execution result.
+|       |   |   Defines the TestRunner protocol and structured
+|       |   |   TestExecutionResult returned to the workflow.
 |       |   |
 |       |   `-- pytest_runner.py
-|       |       Exports the staged Git snapshot into a temporary
-|       |       directory, writes candidate tests only inside the
-|       |       sandbox, runs pytest with a timeout, captures the
-|       |       result, and deletes the sandbox afterwards.
+|       |       Exports the staged Git snapshot into a disposable
+|       |       temporary directory, writes candidate tests only
+|       |       inside that environment, runs pytest with a fixed
+|       |       timeout, captures stdout/stderr/exit status, removes
+|       |       known LLM API secrets from the subprocess environment,
+|       |       and deletes the temporary directory afterwards.
+|       |
+|       `-- approval/
+|           Human oversight and controlled candidate application.
+|           |
+|           |-- __init__.py
+|           |
+|           |-- base.py
+|           |   Defines the ApprovalGate and CandidateApplier
+|           |   protocols used by the workflow.
+|           |
+|           |-- console_gate.py
+|           |   Presents generated candidate tests to the human
+|           |   reviewer and supports:
+|           |
+|           |       A - Approve
+|           |       R - Reject
+|           |       V - View unified diff
+|           |
+|           |   The workflow cannot write a passing generated test
+|           |   into the real working repository without explicit
+|           |   approval.
+|           |
+|           `-- candidate_applier.py
+|               Validates approved test paths and writes approved
+|               candidate tests into the real working repository.
+|               It never performs git add, git commit, or git push.
+|
 `-- tests/
-    Automated project tests that run without a real API key
-    or external network access.
     |
     |-- __init__.py
-    |   Test package initialization file.
+    |   Marks the tests directory as a Python package.
     |
     |-- test_setup.py
-    |   Verifies that the Python project and test environment work.
+    |   Basic project and pytest setup verification.
     |
     |-- test_diff_reader.py
-    |   Tests staged Git file and diff reading using temporary
-    |   local Git repositories.
+    |   Tests staged-file and staged-diff reading, empty staged
+    |   changes, and invalid Git repository handling.
     |
     |-- test_agent_graph.py
-    |   Tests LangGraph routing for staged changes and
-    |   no-change scenarios.
+    |   Tests the main LangGraph workflow using fake dependencies.
+    |   Covers:
+    |
+    |       - no staged changes
+    |       - staged-change analysis
+    |       - candidate generation
+    |       - passing execution
+    |       - human approval
+    |       - human rejection
+    |       - no-test-gap termination
     |
     |-- test_config.py
-    |   Tests application configuration and API key validation.
+    |   Tests configuration loading and required API-key validation.
     |
     |-- test_deepseek_client.py
-    |   Tests DeepSeek client configuration without making
-    |   a real network request.
+    |   Tests DeepSeek client behavior without making live API calls.
     |
-    `-- test_fake_llm_client.py
+    |-- test_fake_llm_client.py
+    |   Tests deterministic fake LLM responses, call recording,
+    |   ordered responses, and exhausted-response handling.
+    |
     |-- test_risk_analyzer.py
-    |   Tests structured risk analysis, prompt construction,
-    |   invalid JSON handling, and risk-level validation.   
-    |   Tests the offline FakeLlmClient, predefined responses,
-    |   prompt recording, and response exhaustion behavior.
-    `-- test_candidate_test_generator.py
-    |   Tests candidate generation, prompt construction, JSON validation,
-    |   safe test paths, and path-traversal rejection.  
+    |   Tests structured risk/test-gap analysis, prompt construction,
+    |   JSON validation, and risk-level validation.
+    |
+    |-- test_candidate_test_generator.py
+    |   Tests candidate-test generation, structured output,
+    |   candidate path validation, and unsafe-path rejection.
+    |
     |-- test_pytest_runner.py
-    |   Tests passing and failing candidate execution,
-    |   filesystem isolation, timeout behavior, and unsafe-path rejection.  
+    |   Tests candidate execution in the temporary environment,
+    |   successful and failed pytest execution, filesystem isolation,
+    |   timeout handling, and unsafe-path rejection.
+    |
     |-- test_test_replanner.py
-    |   Tests failure-aware candidate-test revision.
+    |   Tests failure-aware candidate-test revision and verifies that
+    |   pytest observations are provided to the replanning component.
+    |
     |-- test_replanning_loop.py
-    |   Tests successful failure recovery and bounded retry termination. 
----
-```
-
+    |   Tests the complete bounded recovery loop:
+    |
+    |       failure
+    |          |
+    |          v
+    |       observe
+    |          |
+    |          v
+    |       replan
+    |          |
+    |          v
+    |       retry
+    |
+    |   Also verifies:
+    |
+    |       - recovery after a failed candidate
+    |       - approval after successful recovery
+    |       - rejection after successful recovery
+    |       - maximum retry termination
+    |
+    |-- test_console_approval_gate.py
+    |   Tests human approval, rejection, and View Diff behavior
+    |   without requiring real interactive keyboard input.
+    |
+    `-- test_candidate_applier.py
+        Tests approved candidate application, path-traversal safety,
+        file writing, and verifies that applied tests are not
+        automatically staged or committed by Git.
+        
 ## 11. Limitations
 
 The current project scope is deliberately bounded.
@@ -568,7 +664,7 @@ The project is an academic prototype inspired by Aider and does not attempt to r
 - [x] Phase 8 - Candidate test generation
 - [x] Phase 9 - Isolated pytest execution
 - [x] Phase 10 - Bounded retry and replanning loop
-- [ ] Phase 11 - Human approval gate
+- [x] Phase 11 - Human approval gate
 - [ ] Phase 12 - JSON execution traces
 - [ ] Phase 13 - Evaluation harness and task set
 - [ ] Phase 14 - Failure and recovery scenarios
@@ -705,3 +801,23 @@ human review.
 
 This prevents unbounded autonomous loops while allowing the agent to
 recover from test-generation failures.
+### Human Approval Gate
+
+Candidate tests are first executed inside the isolated test environment.
+
+A candidate that passes is not automatically written to the developer's
+working repository. The workflow pauses at a human approval gate.
+
+The reviewer can:
+
+- `A` - Approve the candidate tests.
+- `R` - Reject the candidate tests and stop.
+- `V` - View the proposed unified diff before deciding.
+
+Only explicit human approval allows the candidate tests to be written
+to the working repository.
+
+Rejecting a candidate leaves the working repository unchanged.
+
+Even after approval, the agent does not stage, commit, or push Git
+changes. Those actions remain under direct developer control.

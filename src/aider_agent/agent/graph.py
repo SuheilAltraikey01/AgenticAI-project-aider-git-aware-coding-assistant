@@ -6,6 +6,16 @@ from aider_agent.analysis.candidate_test_generator import (
 )
 from aider_agent.analysis.risk_analyzer import RiskAnalyzer
 from aider_agent.analysis.test_replanner import TestReplanner
+from aider_agent.approval.base import (
+    ApprovalGate,
+    CandidateApplier,
+)
+from aider_agent.approval.candidate_applier import (
+    CandidateTestApplier,
+)
+from aider_agent.approval.console_gate import (
+    ConsoleApprovalGate,
+)
 from aider_agent.execution.base import TestRunner
 from aider_agent.execution.pytest_runner import PytestSandboxRunner
 from aider_agent.git.diff_reader import GitDiffReader
@@ -120,6 +130,7 @@ def no_candidate_tests(
     """Stop safely when the LLM cannot produce candidate tests."""
 
     return {
+        "candidate_tests": [],
         "status": "no_candidate_tests",
         "message": (
             "No useful candidate tests could be generated. "
@@ -131,6 +142,8 @@ def no_candidate_tests(
 def build_agent_graph(
     llm_client: LlmClient,
     test_runner: TestRunner | None = None,
+    approval_gate: ApprovalGate | None = None,
+    candidate_applier: CandidateApplier | None = None,
     max_retries: int = 3,
 ):
     """Build and compile the bounded agent workflow."""
@@ -156,6 +169,18 @@ def build_agent_graph(
         test_runner
         if test_runner is not None
         else PytestSandboxRunner()
+    )
+
+    gate = (
+        approval_gate
+        if approval_gate is not None
+        else ConsoleApprovalGate()
+    )
+
+    applier = (
+        candidate_applier
+        if candidate_applier is not None
+        else CandidateTestApplier()
     )
 
     def analyze_risk(
@@ -293,12 +318,15 @@ def build_agent_graph(
     def route_after_test_execution(
         state: AgentState,
     ) -> str:
-        """Pass, retry with replanning, or stop at the retry limit."""
+        """
+        Send passing tests to human approval.
+        Replan failed tests when retries remain.
+        """
 
         if state.get(
             "test_success"
         ):
-            return "finish_success"
+            return "request_human_approval"
 
         retry_count = state.get(
             "retry_count",
@@ -369,24 +397,6 @@ def build_agent_graph(
             ),
         }
 
-    def finish_success(
-        state: AgentState,
-    ) -> dict:
-        """Finish after tests pass."""
-
-        retry_count = state.get(
-            "retry_count",
-            0,
-        )
-
-        return {
-            "status": "tests_passed",
-            "message": (
-                "Candidate tests passed after "
-                f"{retry_count} retry attempt(s)."
-            ),
-        }
-
     def retry_limit_reached(
         state: AgentState,
     ) -> dict:
@@ -398,6 +408,97 @@ def build_agent_graph(
                 f"Candidate tests still failed after "
                 f"{max_retries} retry attempt(s). "
                 "Human review is required."
+            ),
+        }
+
+    def request_human_approval(
+        state: AgentState,
+    ) -> dict:
+        """
+        Ask a human before writing generated tests
+        to the real repository.
+        """
+
+        approved = gate.request_approval(
+            repository_path=state.get(
+                "repository_path",
+                ".",
+            ),
+            candidate_tests=state.get(
+                "candidate_tests",
+                [],
+            ),
+        )
+
+        if approved:
+            return {
+                "approval_granted": True,
+                "status": "approval_granted",
+                "message": (
+                    "Human reviewer approved "
+                    "the candidate tests."
+                ),
+            }
+
+        return {
+            "approval_granted": False,
+            "status": "approval_rejected",
+            "message": (
+                "Human reviewer rejected "
+                "the candidate tests."
+            ),
+        }
+
+    def route_after_approval(
+        state: AgentState,
+    ) -> str:
+        """Apply tests only after explicit human approval."""
+
+        if state.get(
+            "approval_granted",
+            False,
+        ):
+            return "apply_candidate_tests"
+
+        return "approval_rejected"
+
+    def apply_candidate_tests(
+        state: AgentState,
+    ) -> dict:
+        """Apply approved tests to the real working repository."""
+
+        applied_files = applier.apply(
+            repository_path=state.get(
+                "repository_path",
+                ".",
+            ),
+            candidate_tests=state.get(
+                "candidate_tests",
+                [],
+            ),
+        )
+
+        return {
+            "applied_files": applied_files,
+            "status": "approved_tests_applied",
+            "message": (
+                f"{len(applied_files)} approved test file(s) "
+                "were applied to the working repository. "
+                "No Git staging, commit, or push was performed."
+            ),
+        }
+
+    def approval_rejected(
+        state: AgentState,
+    ) -> dict:
+        """Stop without applying candidate tests."""
+
+        return {
+            "applied_files": [],
+            "status": "approval_rejected",
+            "message": (
+                "Candidate tests were rejected. "
+                "The working repository was not modified."
             ),
         }
 
@@ -436,13 +537,23 @@ def build_agent_graph(
     )
 
     builder.add_node(
-        "finish_success",
-        finish_success,
+        "retry_limit_reached",
+        retry_limit_reached,
     )
 
     builder.add_node(
-        "retry_limit_reached",
-        retry_limit_reached,
+        "request_human_approval",
+        request_human_approval,
+    )
+
+    builder.add_node(
+        "apply_candidate_tests",
+        apply_candidate_tests,
+    )
+
+    builder.add_node(
+        "approval_rejected",
+        approval_rejected,
     )
 
     builder.add_node(
@@ -469,8 +580,10 @@ def build_agent_graph(
         "read_git_changes",
         route_after_git_read,
         {
-            "prepare_analysis": "prepare_analysis",
-            "no_changes": "no_changes",
+            "prepare_analysis":
+                "prepare_analysis",
+            "no_changes":
+                "no_changes",
         },
     )
 
@@ -505,8 +618,8 @@ def build_agent_graph(
         "execute_candidate_tests",
         route_after_test_execution,
         {
-            "finish_success":
-                "finish_success",
+            "request_human_approval":
+                "request_human_approval",
             "replan_candidate_tests":
                 "replan_candidate_tests",
             "retry_limit_reached":
@@ -525,8 +638,24 @@ def build_agent_graph(
         },
     )
 
+    builder.add_conditional_edges(
+        "request_human_approval",
+        route_after_approval,
+        {
+            "apply_candidate_tests":
+                "apply_candidate_tests",
+            "approval_rejected":
+                "approval_rejected",
+        },
+    )
+
     builder.add_edge(
-        "finish_success",
+        "apply_candidate_tests",
+        END,
+    )
+
+    builder.add_edge(
+        "approval_rejected",
         END,
     )
 

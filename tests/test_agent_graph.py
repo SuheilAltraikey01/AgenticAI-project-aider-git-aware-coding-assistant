@@ -59,12 +59,69 @@ class FakeTestRunner:
         return self.result
 
 
+class FakeApprovalGate:
+    """Non-interactive approval gate used by workflow tests."""
+
+    def __init__(
+        self,
+        approved: bool,
+    ):
+        self.approved = approved
+        self.calls = []
+
+    def request_approval(
+        self,
+        repository_path: str,
+        candidate_tests: list[dict],
+    ) -> bool:
+        """Return the configured human decision."""
+
+        self.calls.append(
+            {
+                "repository_path": repository_path,
+                "candidate_tests": candidate_tests,
+            }
+        )
+
+        return self.approved
+
+
+class FakeCandidateApplier:
+    """Fake candidate applier that does not write real files."""
+
+    def __init__(
+        self,
+    ):
+        self.calls = []
+
+    def apply(
+        self,
+        repository_path: str,
+        candidate_tests: list[dict],
+    ) -> list[str]:
+        """Record the application request and return candidate paths."""
+
+        self.calls.append(
+            {
+                "repository_path": repository_path,
+                "candidate_tests": candidate_tests,
+            }
+        )
+
+        return [
+            candidate["file_path"]
+            for candidate in candidate_tests
+        ]
+
+
 def create_test_repository(
     tmp_path: Path,
 ) -> None:
     """Create a temporary Git repository."""
 
-    repo = Repo.init(tmp_path)
+    repo = Repo.init(
+        tmp_path
+    )
 
     try:
         with repo.config_writer() as config:
@@ -80,7 +137,10 @@ def create_test_repository(
                 "test@example.com",
             )
 
-        sample_file = tmp_path / "sample.py"
+        sample_file = (
+            tmp_path
+            / "sample.py"
+        )
 
         sample_file.write_text(
             "def add(a, b):\n"
@@ -105,7 +165,10 @@ def stage_test_change(
 ) -> None:
     """Modify and stage the sample file."""
 
-    sample_file = tmp_path / "sample.py"
+    sample_file = (
+        tmp_path
+        / "sample.py"
+    )
 
     sample_file.write_text(
         "def add(a, b):\n"
@@ -114,7 +177,9 @@ def stage_test_change(
         encoding="utf-8",
     )
 
-    repo = Repo(tmp_path)
+    repo = Repo(
+        tmp_path
+    )
 
     try:
         repo.index.add(
@@ -128,7 +193,7 @@ def stage_test_change(
 def test_graph_stops_when_no_changes_are_staged(
     tmp_path,
 ):
-    """The graph should stop without calling LLM or test runner."""
+    """The graph should stop without calling external components."""
 
     create_test_repository(
         tmp_path
@@ -148,9 +213,17 @@ def test_graph_stops_when_no_changes_are_staged(
         }
     )
 
+    gate = FakeApprovalGate(
+        approved=True
+    )
+
+    applier = FakeCandidateApplier()
+
     graph = build_agent_graph(
         client,
         test_runner=runner,
+        approval_gate=gate,
+        candidate_applier=applier,
     )
 
     result = graph.invoke(
@@ -173,14 +246,16 @@ def test_graph_stops_when_no_changes_are_staged(
 
     assert client.calls == []
     assert runner.calls == []
+    assert gate.calls == []
+    assert applier.calls == []
 
 
 def test_graph_analyzes_staged_changes(
     tmp_path,
 ):
     """
-    Staged changes should be analyzed, candidate tests generated,
-    and candidate tests executed.
+    Staged changes should be analyzed, tested,
+    approved, and then applied.
     """
 
     create_test_repository(
@@ -208,9 +283,17 @@ def test_graph_analyzes_staged_changes(
         }
     )
 
+    gate = FakeApprovalGate(
+        approved=True
+    )
+
+    applier = FakeCandidateApplier()
+
     graph = build_agent_graph(
         client,
         test_runner=runner,
+        approval_gate=gate,
+        candidate_applier=applier,
     )
 
     result = graph.invoke(
@@ -223,7 +306,7 @@ def test_graph_analyzes_staged_changes(
 
     assert (
         result["status"]
-        == "tests_passed"
+        == "approved_tests_applied"
     )
 
     assert (
@@ -267,14 +350,34 @@ def test_graph_analyzes_staged_changes(
         is False
     )
 
-    # Risk analysis + candidate generation
+    assert (
+        result["approval_granted"]
+        is True
+    )
+
+    assert (
+        result["applied_files"]
+        == ["tests/test_sample.py"]
+    )
+
+    # Risk analysis + candidate generation.
     assert len(
         client.calls
     ) == 2
 
-    # Candidate execution
+    # Candidate executed once.
     assert len(
         runner.calls
+    ) == 1
+
+    # Human approval requested once.
+    assert len(
+        gate.calls
+    ) == 1
+
+    # Approved candidate applied once.
+    assert len(
+        applier.calls
     ) == 1
 
 
@@ -316,9 +419,17 @@ def test_graph_skips_generation_when_no_test_gaps(
         }
     )
 
+    gate = FakeApprovalGate(
+        approved=True
+    )
+
+    applier = FakeCandidateApplier()
+
     graph = build_agent_graph(
         client,
         test_runner=runner,
+        approval_gate=gate,
+        candidate_applier=applier,
     )
 
     result = graph.invoke(
@@ -339,10 +450,91 @@ def test_graph_skips_generation_when_no_test_gaps(
         == []
     )
 
-    # Only risk analysis should call the LLM.
+    # Only risk analysis used the LLM.
     assert len(
         client.calls
     ) == 1
 
-    # No candidate tests means no execution.
+    # No candidate execution.
     assert runner.calls == []
+
+    # No approval needed.
+    assert gate.calls == []
+
+    # Nothing should be applied.
+    assert applier.calls == []
+
+
+def test_graph_stops_when_human_rejects(
+    tmp_path,
+):
+    """Rejected candidate tests must never be applied."""
+
+    create_test_repository(
+        tmp_path
+    )
+
+    stage_test_change(
+        tmp_path
+    )
+
+    client = FakeLlmClient(
+        responses=[
+            FAKE_ANALYSIS,
+            FAKE_CANDIDATE_TESTS,
+        ]
+    )
+
+    runner = FakeTestRunner(
+        {
+            "success": True,
+            "exit_code": 0,
+            "stdout": "1 passed",
+            "stderr": "",
+            "timed_out": False,
+        }
+    )
+
+    gate = FakeApprovalGate(
+        approved=False
+    )
+
+    applier = FakeCandidateApplier()
+
+    graph = build_agent_graph(
+        client,
+        test_runner=runner,
+        approval_gate=gate,
+        candidate_applier=applier,
+    )
+
+    result = graph.invoke(
+        {
+            "repository_path": str(
+                tmp_path
+            )
+        }
+    )
+
+    assert (
+        result["status"]
+        == "approval_rejected"
+    )
+
+    assert (
+        result["approval_granted"]
+        is False
+    )
+
+    assert (
+        result["applied_files"]
+        == []
+    )
+
+    # Tests passed, therefore approval was requested.
+    assert len(
+        gate.calls
+    ) == 1
+
+    # Human rejected, therefore nothing was applied.
+    assert applier.calls == []

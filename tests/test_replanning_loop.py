@@ -47,7 +47,7 @@ REVISED_CANDIDATE = """
 
 
 class SequenceTestRunner:
-    """Return predefined execution results in order."""
+    """Return predefined test execution results in order."""
 
     def __init__(
         self,
@@ -67,10 +67,8 @@ class SequenceTestRunner:
 
         self.calls.append(
             {
-                "repository_path":
-                    repository_path,
-                "candidate_tests":
-                    candidate_tests,
+                "repository_path": repository_path,
+                "candidate_tests": candidate_tests,
             }
         )
 
@@ -84,10 +82,63 @@ class SequenceTestRunner:
         )
 
 
+class FakeApprovalGate:
+    """Non-interactive approval gate for replanning tests."""
+
+    def __init__(
+        self,
+        approved: bool,
+    ):
+        self.approved = approved
+        self.calls = []
+
+    def request_approval(
+        self,
+        repository_path: str,
+        candidate_tests: list[dict],
+    ) -> bool:
+
+        self.calls.append(
+            {
+                "repository_path": repository_path,
+                "candidate_tests": candidate_tests,
+            }
+        )
+
+        return self.approved
+
+
+class FakeCandidateApplier:
+    """Fake applier that records application requests."""
+
+    def __init__(
+        self,
+    ):
+        self.calls = []
+
+    def apply(
+        self,
+        repository_path: str,
+        candidate_tests: list[dict],
+    ) -> list[str]:
+
+        self.calls.append(
+            {
+                "repository_path": repository_path,
+                "candidate_tests": candidate_tests,
+            }
+        )
+
+        return [
+            candidate["file_path"]
+            for candidate in candidate_tests
+        ]
+
+
 def create_repository(
     tmp_path: Path,
 ) -> None:
-    """Create a staged temporary Git repository."""
+    """Create a temporary Git repository with one staged change."""
 
     repo = Repo.init(
         tmp_path
@@ -108,7 +159,8 @@ def create_repository(
             )
 
         sample = (
-            tmp_path / "sample.py"
+            tmp_path
+            / "sample.py"
         )
 
         sample.write_text(
@@ -140,10 +192,13 @@ def create_repository(
         repo.close()
 
 
-def test_graph_replans_after_failure_and_then_passes(
+def test_graph_replans_after_failure_then_gets_approval(
     tmp_path,
 ):
-    """A failed candidate should be revised and executed again."""
+    """
+    A failed candidate should be revised, executed again,
+    approved, and then applied.
+    """
 
     create_repository(
         tmp_path
@@ -179,22 +234,31 @@ def test_graph_replans_after_failure_and_then_passes(
         ]
     )
 
+    gate = FakeApprovalGate(
+        approved=True
+    )
+
+    applier = FakeCandidateApplier()
+
     graph = build_agent_graph(
         client,
         test_runner=runner,
+        approval_gate=gate,
+        candidate_applier=applier,
         max_retries=3,
     )
 
     result = graph.invoke(
         {
-            "repository_path":
-                str(tmp_path)
+            "repository_path": str(
+                tmp_path
+            )
         }
     )
 
     assert (
         result["status"]
-        == "tests_passed"
+        == "approved_tests_applied"
     )
 
     assert (
@@ -202,15 +266,37 @@ def test_graph_replans_after_failure_and_then_passes(
         == 1
     )
 
-    # Analysis + generation + replanning
+    assert (
+        result["approval_granted"]
+        is True
+    )
+
+    assert (
+        result["applied_files"]
+        == [
+            "tests/test_sample.py"
+        ]
+    )
+
+    # Risk analysis + initial generation + one replanning call.
     assert len(
         client.calls
     ) == 3
 
-    # Initial execution + retry execution
+    # Initial execution + retry execution.
     assert len(
         runner.calls
     ) == 2
+
+    # Approval requested only after the revised test passed.
+    assert len(
+        gate.calls
+    ) == 1
+
+    # Candidate applied only after approval.
+    assert len(
+        applier.calls
+    ) == 1
 
     second_candidate = (
         runner.calls[1][
@@ -221,6 +307,96 @@ def test_graph_replans_after_failure_and_then_passes(
     assert (
         "add(2, 3) == 5"
         in second_candidate
+    )
+
+
+def test_graph_replanned_test_can_be_rejected(
+    tmp_path,
+):
+    """
+    A revised candidate may pass but must not be applied
+    when the human rejects it.
+    """
+
+    create_repository(
+        tmp_path
+    )
+
+    client = FakeLlmClient(
+        responses=[
+            FAKE_ANALYSIS,
+            INITIAL_CANDIDATE,
+            REVISED_CANDIDATE,
+        ]
+    )
+
+    runner = SequenceTestRunner(
+        results=[
+            {
+                "success": False,
+                "exit_code": 1,
+                "stdout": (
+                    "AssertionError: "
+                    "assert 5 == 6"
+                ),
+                "stderr": "",
+                "timed_out": False,
+            },
+            {
+                "success": True,
+                "exit_code": 0,
+                "stdout": "1 passed",
+                "stderr": "",
+                "timed_out": False,
+            },
+        ]
+    )
+
+    gate = FakeApprovalGate(
+        approved=False
+    )
+
+    applier = FakeCandidateApplier()
+
+    graph = build_agent_graph(
+        client,
+        test_runner=runner,
+        approval_gate=gate,
+        candidate_applier=applier,
+        max_retries=3,
+    )
+
+    result = graph.invoke(
+        {
+            "repository_path": str(
+                tmp_path
+            )
+        }
+    )
+
+    assert (
+        result["status"]
+        == "approval_rejected"
+    )
+
+    assert (
+        result["retry_count"]
+        == 1
+    )
+
+    assert (
+        result["approval_granted"]
+        is False
+    )
+
+    assert len(
+        gate.calls
+    ) == 1
+
+    # Rejection means nothing is applied.
+    assert (
+        applier.calls
+        == []
     )
 
 
@@ -258,16 +434,25 @@ def test_graph_stops_after_retry_limit(
         ]
     )
 
+    gate = FakeApprovalGate(
+        approved=True
+    )
+
+    applier = FakeCandidateApplier()
+
     graph = build_agent_graph(
         client,
         test_runner=runner,
+        approval_gate=gate,
+        candidate_applier=applier,
         max_retries=2,
     )
 
     result = graph.invoke(
         {
-            "repository_path":
-                str(tmp_path)
+            "repository_path": str(
+                tmp_path
+            )
         }
     )
 
@@ -281,12 +466,24 @@ def test_graph_stops_after_retry_limit(
         == 2
     )
 
-    # 1 initial execution + 2 retries
+    # One initial execution + two retries.
     assert len(
         runner.calls
     ) == 3
 
-    # Risk + initial generation + 2 replans
+    # Risk + initial generation + two replanning calls.
     assert len(
         client.calls
     ) == 4
+
+    # Tests never passed, so approval must never be requested.
+    assert (
+        gate.calls
+        == []
+    )
+
+    # Nothing should be applied.
+    assert (
+        applier.calls
+        == []
+    )

@@ -23,6 +23,7 @@ class AgentState(TypedDict, total=False):
     test_timed_out: bool
 
     retry_count: int
-
+    approval_granted: bool
+    applied_files: list[str]
     status: str
     message: str
