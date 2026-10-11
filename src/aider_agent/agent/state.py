@@ -22,5 +22,7 @@ class AgentState(TypedDict, total=False):
     test_stderr: str
     test_timed_out: bool
 
+    retry_count: int
+
     status: str
     message: str

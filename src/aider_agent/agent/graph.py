@@ -5,6 +5,7 @@ from aider_agent.analysis.candidate_test_generator import (
     CandidateTestGenerator,
 )
 from aider_agent.analysis.risk_analyzer import RiskAnalyzer
+from aider_agent.analysis.test_replanner import TestReplanner
 from aider_agent.execution.base import TestRunner
 from aider_agent.execution.pytest_runner import PytestSandboxRunner
 from aider_agent.git.diff_reader import GitDiffReader
@@ -68,12 +69,23 @@ def prepare_analysis(
 def route_after_analysis(
     state: AgentState,
 ) -> str:
-    """Decide whether candidate tests should be generated."""
+    """Choose whether candidate tests are needed."""
 
     if state.get("test_gaps"):
         return "generate_candidate_tests"
 
     return "no_test_gaps"
+
+
+def route_after_candidate_generation(
+    state: AgentState,
+) -> str:
+    """Run candidates only when useful candidates exist."""
+
+    if state.get("candidate_tests"):
+        return "execute_candidate_tests"
+
+    return "no_candidate_tests"
 
 
 def no_changes(
@@ -83,16 +95,14 @@ def no_changes(
 
     return {
         "status": "no_changes",
-        "message": (
-            "No staged Git changes were found."
-        ),
+        "message": "No staged Git changes were found.",
     }
 
 
 def no_test_gaps(
     state: AgentState,
 ) -> dict:
-    """Finish when analysis finds no test gaps."""
+    """Finish when analysis finds no missing tests."""
 
     return {
         "candidate_tests": [],
@@ -104,17 +114,41 @@ def no_test_gaps(
     }
 
 
+def no_candidate_tests(
+    state: AgentState,
+) -> dict:
+    """Stop safely when the LLM cannot produce candidate tests."""
+
+    return {
+        "status": "no_candidate_tests",
+        "message": (
+            "No useful candidate tests could be generated. "
+            "Human review is required."
+        ),
+    }
+
+
 def build_agent_graph(
     llm_client: LlmClient,
     test_runner: TestRunner | None = None,
+    max_retries: int = 3,
 ):
-    """Build and compile the agent workflow."""
+    """Build and compile the bounded agent workflow."""
+
+    if not isinstance(max_retries, int) or max_retries < 0:
+        raise ValueError(
+            "max_retries must be a non-negative integer."
+        )
 
     risk_analyzer = RiskAnalyzer(
         llm_client
     )
 
     test_generator = CandidateTestGenerator(
+        llm_client
+    )
+
+    test_replanner = TestReplanner(
         llm_client
     )
 
@@ -127,7 +161,7 @@ def build_agent_graph(
     def analyze_risk(
         state: AgentState,
     ) -> dict:
-        """Analyze staged changes for risks and test gaps."""
+        """Analyze staged changes for risk and test gaps."""
 
         analysis = risk_analyzer.analyze(
             staged_files=state.get(
@@ -162,7 +196,7 @@ def build_agent_graph(
     def generate_candidate_tests(
         state: AgentState,
     ) -> dict:
-        """Generate candidate tests for identified test gaps."""
+        """Generate initial candidate tests."""
 
         result = test_generator.generate(
             staged_files=state.get(
@@ -193,6 +227,7 @@ def build_agent_graph(
 
         return {
             "candidate_tests": candidate_tests,
+            "retry_count": 0,
             "status": "candidate_tests_generated",
             "message": (
                 f"{len(candidate_tests)} candidate "
@@ -203,7 +238,7 @@ def build_agent_graph(
     def execute_candidate_tests(
         state: AgentState,
     ) -> dict:
-        """Execute generated candidate tests inside the sandbox."""
+        """Execute candidate tests inside the isolated runner."""
 
         result = runner.run(
             repository_path=state.get(
@@ -255,6 +290,117 @@ def build_agent_graph(
             "message": message,
         }
 
+    def route_after_test_execution(
+        state: AgentState,
+    ) -> str:
+        """Pass, retry with replanning, or stop at the retry limit."""
+
+        if state.get(
+            "test_success"
+        ):
+            return "finish_success"
+
+        retry_count = state.get(
+            "retry_count",
+            0,
+        )
+
+        if retry_count < max_retries:
+            return "replan_candidate_tests"
+
+        return "retry_limit_reached"
+
+    def replan_candidate_tests(
+        state: AgentState,
+    ) -> dict:
+        """Revise failed candidate tests using pytest observations."""
+
+        next_retry = (
+            state.get(
+                "retry_count",
+                0,
+            )
+            + 1
+        )
+
+        result = test_replanner.revise(
+            staged_files=state.get(
+                "staged_files",
+                [],
+            ),
+            staged_diff=state.get(
+                "staged_diff",
+                "",
+            ),
+            test_gaps=state.get(
+                "test_gaps",
+                [],
+            ),
+            previous_candidate_tests=state.get(
+                "candidate_tests",
+                [],
+            ),
+            test_stdout=state.get(
+                "test_stdout",
+                "",
+            ),
+            test_stderr=state.get(
+                "test_stderr",
+                "",
+            ),
+            timed_out=state.get(
+                "test_timed_out",
+                False,
+            ),
+            retry_number=next_retry,
+        )
+
+        candidate_tests = result[
+            "candidate_tests"
+        ]
+
+        return {
+            "candidate_tests": candidate_tests,
+            "retry_count": next_retry,
+            "status": "candidate_tests_replanned",
+            "message": (
+                f"Candidate tests revised for retry "
+                f"{next_retry} of {max_retries}."
+            ),
+        }
+
+    def finish_success(
+        state: AgentState,
+    ) -> dict:
+        """Finish after tests pass."""
+
+        retry_count = state.get(
+            "retry_count",
+            0,
+        )
+
+        return {
+            "status": "tests_passed",
+            "message": (
+                "Candidate tests passed after "
+                f"{retry_count} retry attempt(s)."
+            ),
+        }
+
+    def retry_limit_reached(
+        state: AgentState,
+    ) -> dict:
+        """Stop after the configured retry limit."""
+
+        return {
+            "status": "retry_limit_reached",
+            "message": (
+                f"Candidate tests still failed after "
+                f"{max_retries} retry attempt(s). "
+                "Human review is required."
+            ),
+        }
+
     builder = StateGraph(
         AgentState
     )
@@ -285,8 +431,28 @@ def build_agent_graph(
     )
 
     builder.add_node(
+        "replan_candidate_tests",
+        replan_candidate_tests,
+    )
+
+    builder.add_node(
+        "finish_success",
+        finish_success,
+    )
+
+    builder.add_node(
+        "retry_limit_reached",
+        retry_limit_reached,
+    )
+
+    builder.add_node(
         "no_test_gaps",
         no_test_gaps,
+    )
+
+    builder.add_node(
+        "no_candidate_tests",
+        no_candidate_tests,
     )
 
     builder.add_node(
@@ -324,18 +490,58 @@ def build_agent_graph(
         },
     )
 
-    builder.add_edge(
+    builder.add_conditional_edges(
         "generate_candidate_tests",
+        route_after_candidate_generation,
+        {
+            "execute_candidate_tests":
+                "execute_candidate_tests",
+            "no_candidate_tests":
+                "no_candidate_tests",
+        },
+    )
+
+    builder.add_conditional_edges(
         "execute_candidate_tests",
+        route_after_test_execution,
+        {
+            "finish_success":
+                "finish_success",
+            "replan_candidate_tests":
+                "replan_candidate_tests",
+            "retry_limit_reached":
+                "retry_limit_reached",
+        },
+    )
+
+    builder.add_conditional_edges(
+        "replan_candidate_tests",
+        route_after_candidate_generation,
+        {
+            "execute_candidate_tests":
+                "execute_candidate_tests",
+            "no_candidate_tests":
+                "no_candidate_tests",
+        },
     )
 
     builder.add_edge(
-        "execute_candidate_tests",
+        "finish_success",
+        END,
+    )
+
+    builder.add_edge(
+        "retry_limit_reached",
         END,
     )
 
     builder.add_edge(
         "no_test_gaps",
+        END,
+    )
+
+    builder.add_edge(
+        "no_candidate_tests",
         END,
     )
 

@@ -456,6 +456,9 @@ aider-git-aware-coding-assistant/
 |       |   `-- candidate_test_generator.py
 |       |       Generates structured pytest candidates for identified
 |       |       test gaps without writing them to the real repository.
+|       |-- test_replanner.py
+|       |   Uses pytest failure observations to generate revised
+|       |   candidate tests after an unsuccessful execution.
 |       `-- llm/
 |           LLM provider abstraction and implementations.
 |           |
@@ -524,6 +527,10 @@ aider-git-aware-coding-assistant/
     |-- test_pytest_runner.py
     |   Tests passing and failing candidate execution,
     |   filesystem isolation, timeout behavior, and unsafe-path rejection.  
+    |-- test_test_replanner.py
+    |   Tests failure-aware candidate-test revision.
+    |-- test_replanning_loop.py
+    |   Tests successful failure recovery and bounded retry termination. 
 ---
 ```
 
@@ -560,7 +567,7 @@ The project is an academic prototype inspired by Aider and does not attempt to r
 - [x] Phase 7 - Risk and test-gap analysis
 - [x] Phase 8 - Candidate test generation
 - [x] Phase 9 - Isolated pytest execution
-- [ ] Phase 10 - Bounded retry and replanning loop
+- [x] Phase 10 - Bounded retry and replanning loop
 - [ ] Phase 11 - Human approval gate
 - [ ] Phase 12 - JSON execution traces
 - [ ] Phase 13 - Evaluation harness and task set
@@ -662,6 +669,7 @@ validated and must remain inside the `tests/` directory.
 
 Execution of generated tests is handled separately in an isolated
 environment in a later phase.
+
 ### Candidate Test Execution Safety
 
 Generated tests are never executed directly inside the developer's
@@ -678,3 +686,22 @@ This design provides filesystem and process separation, but it is not a
 complete operating-system security sandbox and does not itself guarantee
 network isolation. Stronger container-based isolation remains a future
 hardening step.
+
+### Bounded Retry and Replanning
+
+When a generated candidate test fails, the agent does not simply run
+the same test again.
+
+The pytest observation is returned to the replanning component,
+including bounded stdout, stderr, timeout status, the previous candidate
+tests, and the original staged Git context.
+
+The LLM then proposes a revised candidate test, which is validated and
+executed again in the isolated test environment.
+
+The workflow allows a maximum of three retries after the initial test
+execution. If the tests still fail, the workflow stops and requires
+human review.
+
+This prevents unbounded autonomous loops while allowing the agent to
+recover from test-generation failures.
