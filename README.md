@@ -526,6 +526,7 @@ AgenticAI-project-aider-git-aware-coding-assistant/
 |       `-- approval/
 |           Human oversight and controlled candidate application.
 |           |
+|           |
 |           |-- __init__.py
 |           |
 |           |-- base.py
@@ -548,6 +549,20 @@ AgenticAI-project-aider-git-aware-coding-assistant/
 |               Validates approved test paths and writes approved
 |               candidate tests into the real working repository.
 |               It never performs git add, git commit, or git push.
+            |-- tracing/
+|             Execution trace persistence components.
+|           |
+|           |-- __init__.py
+|           |
+|           |-- base.py
+|           |   Defines the TraceWriter protocol used by the workflow.
+|           |
+|           `-- json_trace_writer.py
+|       Persists a structured JSON trace after each completed
+|       workflow. Records analysis, candidate tests, execution
+|       results, retries, approval decisions, applied files,
+|       timestamps, and final status while avoiding storage of
+|       the raw staged Git diff.
 |
 `-- tests/
     |
@@ -626,10 +641,17 @@ AgenticAI-project-aider-git-aware-coding-assistant/
     |   without requiring real interactive keyboard input.
     |
     `-- test_candidate_applier.py
-        Tests approved candidate application, path-traversal safety,
-        file writing, and verifies that applied tests are not
-        automatically staged or committed by Git.
-        
+    |   Tests approved candidate application, path-traversal safety,
+    |    file writing, and verifies that applied tests are not
+    |    automatically staged or committed by Git.
+    |-- test_json_trace_writer.py
+    |   Tests structured JSON persistence and verifies that the raw
+    |   staged Git diff is not copied into trace files.
+    |
+    |-- test_execution_trace.py
+    |   Tests that a complete LangGraph workflow produces an
+    |   inspectable JSON event trace.   
+    
 ## 11. Limitations
 
 The current project scope is deliberately bounded.
@@ -665,7 +687,7 @@ The project is an academic prototype inspired by Aider and does not attempt to r
 - [x] Phase 9 - Isolated pytest execution
 - [x] Phase 10 - Bounded retry and replanning loop
 - [x] Phase 11 - Human approval gate
-- [ ] Phase 12 - JSON execution traces
+- [x] Phase 12 - JSON execution traces
 - [ ] Phase 13 - Evaluation harness and task set
 - [ ] Phase 14 - Failure and recovery scenarios
 - [ ] Phase 15 - Cost and latency evaluation
@@ -821,3 +843,32 @@ Rejecting a candidate leaves the working repository unchanged.
 
 Even after approval, the agent does not stage, commit, or push Git
 changes. Those actions remain under direct developer control.
+
+### JSON Execution Traces
+
+Every completed agent workflow produces a structured local JSON trace
+inside the `traces/` directory.
+
+The trace records the major observable workflow events, including:
+
+- staged file inspection
+- risk and test-gap analysis
+- candidate test generation
+- pytest execution attempts
+- replanning and retry attempts
+- human approval or rejection
+- applied candidate files
+- final workflow status
+
+Each event includes a UTC timestamp and structured details.
+
+The raw staged Git diff is not copied into the trace. Instead, the trace
+stores the staged file names, diff character count, and a SHA-256 digest.
+This reduces unnecessary duplication of source code or potentially
+sensitive content in logs.
+
+Generated candidate tests and bounded pytest output are retained because
+they are needed to inspect and explain the agent's decisions.
+
+Trace files are local development artifacts and are excluded from Git by
+`.gitignore`.

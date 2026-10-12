@@ -2,7 +2,7 @@ from typing import TypedDict
 
 
 class AgentState(TypedDict, total=False):
-    """State shared between the nodes of the agent workflow."""
+    """State shared between nodes of the agent workflow."""
 
     repository_path: str
 
@@ -23,7 +23,12 @@ class AgentState(TypedDict, total=False):
     test_timed_out: bool
 
     retry_count: int
+
     approval_granted: bool
     applied_files: list[str]
+
+    trace_events: list[dict]
+    trace_path: str
+
     status: str
     message: str

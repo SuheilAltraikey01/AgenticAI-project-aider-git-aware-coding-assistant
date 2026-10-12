@@ -1,3 +1,5 @@
+from datetime import datetime, timezone
+
 from langgraph.graph import END, START, StateGraph
 
 from aider_agent.agent.state import AgentState
@@ -20,6 +22,34 @@ from aider_agent.execution.base import TestRunner
 from aider_agent.execution.pytest_runner import PytestSandboxRunner
 from aider_agent.git.diff_reader import GitDiffReader
 from aider_agent.llm.base import LlmClient
+from aider_agent.tracing.base import TraceWriter
+from aider_agent.tracing.json_trace_writer import (
+    JsonTraceWriter,
+)
+
+
+def _trace_event(
+    state: AgentState,
+    event_type: str,
+    details: dict,
+) -> list[dict]:
+    """Append one structured event to the workflow trace."""
+
+    event = {
+        "timestamp_utc": datetime.now(
+            timezone.utc
+        ).isoformat(),
+        "type": event_type,
+        "details": details,
+    }
+
+    return [
+        *state.get(
+            "trace_events",
+            [],
+        ),
+        event,
+    ]
 
 
 def read_git_changes(
@@ -43,6 +73,19 @@ def read_git_changes(
         "staged_files": staged_files,
         "staged_diff": staged_diff,
         "status": "git_read_complete",
+        "trace_events": _trace_event(
+            state,
+            "git_read",
+            {
+                "staged_files": staged_files,
+                "staged_file_count": len(
+                    staged_files
+                ),
+                "staged_diff_characters": len(
+                    staged_diff
+                ),
+            },
+        ),
     }
 
 
@@ -105,7 +148,16 @@ def no_changes(
 
     return {
         "status": "no_changes",
-        "message": "No staged Git changes were found.",
+        "message": (
+            "No staged Git changes were found."
+        ),
+        "trace_events": _trace_event(
+            state,
+            "workflow_stopped",
+            {
+                "reason": "no_changes",
+            },
+        ),
     }
 
 
@@ -120,6 +172,13 @@ def no_test_gaps(
         "message": (
             "Risk analysis completed and "
             "no test gaps were identified."
+        ),
+        "trace_events": _trace_event(
+            state,
+            "workflow_stopped",
+            {
+                "reason": "no_test_gaps",
+            },
         ),
     }
 
@@ -136,6 +195,13 @@ def no_candidate_tests(
             "No useful candidate tests could be generated. "
             "Human review is required."
         ),
+        "trace_events": _trace_event(
+            state,
+            "workflow_stopped",
+            {
+                "reason": "no_candidate_tests",
+            },
+        ),
     }
 
 
@@ -144,6 +210,7 @@ def build_agent_graph(
     test_runner: TestRunner | None = None,
     approval_gate: ApprovalGate | None = None,
     candidate_applier: CandidateApplier | None = None,
+    trace_writer: TraceWriter | None = None,
     max_retries: int = 3,
 ):
     """Build and compile the bounded agent workflow."""
@@ -183,6 +250,12 @@ def build_agent_graph(
         else CandidateTestApplier()
     )
 
+    writer = (
+        trace_writer
+        if trace_writer is not None
+        else JsonTraceWriter()
+    )
+
     def analyze_risk(
         state: AgentState,
     ) -> dict:
@@ -215,6 +288,24 @@ def build_agent_graph(
             "status": "analysis_complete",
             "message": (
                 "Risk and test-gap analysis completed."
+            ),
+            "trace_events": _trace_event(
+                state,
+                "risk_analysis",
+                {
+                    "risk_level": analysis[
+                        "risk_level"
+                    ],
+                    "risky_files": analysis[
+                        "risky_files"
+                    ],
+                    "test_gaps": analysis[
+                        "test_gaps"
+                    ],
+                    "summary": analysis[
+                        "summary"
+                    ],
+                },
             ),
         }
 
@@ -250,6 +341,14 @@ def build_agent_graph(
             "candidate_tests"
         ]
 
+        candidate_files = [
+            candidate[
+                "file_path"
+            ]
+            for candidate
+            in candidate_tests
+        ]
+
         return {
             "candidate_tests": candidate_tests,
             "retry_count": 0,
@@ -257,6 +356,16 @@ def build_agent_graph(
             "message": (
                 f"{len(candidate_tests)} candidate "
                 "test(s) generated."
+            ),
+            "trace_events": _trace_event(
+                state,
+                "candidate_generation",
+                {
+                    "candidate_count": len(
+                        candidate_tests
+                    ),
+                    "candidate_files": candidate_files,
+                },
             ),
         }
 
@@ -295,6 +404,14 @@ def build_agent_graph(
                 "Candidate tests completed with failures."
             )
 
+        attempt_number = (
+            state.get(
+                "retry_count",
+                0,
+            )
+            + 1
+        )
+
         return {
             "test_success": result[
                 "success"
@@ -313,6 +430,22 @@ def build_agent_graph(
             ],
             "status": status,
             "message": message,
+            "trace_events": _trace_event(
+                state,
+                "test_execution",
+                {
+                    "attempt": attempt_number,
+                    "success": result[
+                        "success"
+                    ],
+                    "exit_code": result[
+                        "exit_code"
+                    ],
+                    "timed_out": result[
+                        "timed_out"
+                    ],
+                },
+            ),
         }
 
     def route_after_test_execution(
@@ -387,6 +520,14 @@ def build_agent_graph(
             "candidate_tests"
         ]
 
+        candidate_files = [
+            candidate[
+                "file_path"
+            ]
+            for candidate
+            in candidate_tests
+        ]
+
         return {
             "candidate_tests": candidate_tests,
             "retry_count": next_retry,
@@ -394,6 +535,17 @@ def build_agent_graph(
             "message": (
                 f"Candidate tests revised for retry "
                 f"{next_retry} of {max_retries}."
+            ),
+            "trace_events": _trace_event(
+                state,
+                "candidate_replanned",
+                {
+                    "retry_number": next_retry,
+                    "candidate_count": len(
+                        candidate_tests
+                    ),
+                    "candidate_files": candidate_files,
+                },
             ),
         }
 
@@ -409,15 +561,23 @@ def build_agent_graph(
                 f"{max_retries} retry attempt(s). "
                 "Human review is required."
             ),
+            "trace_events": _trace_event(
+                state,
+                "workflow_stopped",
+                {
+                    "reason": "retry_limit_reached",
+                    "retry_count": state.get(
+                        "retry_count",
+                        0,
+                    ),
+                },
+            ),
         }
 
     def request_human_approval(
         state: AgentState,
     ) -> dict:
-        """
-        Ask a human before writing generated tests
-        to the real repository.
-        """
+        """Ask a human before writing tests to the real repository."""
 
         approved = gate.request_approval(
             repository_path=state.get(
@@ -438,6 +598,13 @@ def build_agent_graph(
                     "Human reviewer approved "
                     "the candidate tests."
                 ),
+                "trace_events": _trace_event(
+                    state,
+                    "approval_decision",
+                    {
+                        "approved": True,
+                    },
+                ),
             }
 
         return {
@@ -446,6 +613,13 @@ def build_agent_graph(
             "message": (
                 "Human reviewer rejected "
                 "the candidate tests."
+            ),
+            "trace_events": _trace_event(
+                state,
+                "approval_decision",
+                {
+                    "approved": False,
+                },
             ),
         }
 
@@ -486,6 +660,13 @@ def build_agent_graph(
                 "were applied to the working repository. "
                 "No Git staging, commit, or push was performed."
             ),
+            "trace_events": _trace_event(
+                state,
+                "candidate_application",
+                {
+                    "applied_files": applied_files,
+                },
+            ),
         }
 
     def approval_rejected(
@@ -500,6 +681,53 @@ def build_agent_graph(
                 "Candidate tests were rejected. "
                 "The working repository was not modified."
             ),
+            "trace_events": _trace_event(
+                state,
+                "workflow_stopped",
+                {
+                    "reason": "approval_rejected",
+                },
+            ),
+        }
+
+    def finalize_trace(
+        state: AgentState,
+    ) -> dict:
+        """Persist the final JSON execution trace."""
+
+        final_events = _trace_event(
+            state,
+            "workflow_finished",
+            {
+                "final_status": state.get(
+                    "status"
+                ),
+                "retry_count": state.get(
+                    "retry_count",
+                    0,
+                ),
+            },
+        )
+
+        state_for_trace = dict(
+            state
+        )
+
+        state_for_trace[
+            "trace_events"
+        ] = final_events
+
+        trace_path = writer.write(
+            repository_path=state.get(
+                "repository_path",
+                ".",
+            ),
+            state=state_for_trace,
+        )
+
+        return {
+            "trace_events": final_events,
+            "trace_path": trace_path,
         }
 
     builder = StateGraph(
@@ -569,6 +797,11 @@ def build_agent_graph(
     builder.add_node(
         "no_changes",
         no_changes,
+    )
+
+    builder.add_node(
+        "finalize_trace",
+        finalize_trace,
     )
 
     builder.add_edge(
@@ -651,31 +884,36 @@ def build_agent_graph(
 
     builder.add_edge(
         "apply_candidate_tests",
-        END,
+        "finalize_trace",
     )
 
     builder.add_edge(
         "approval_rejected",
-        END,
+        "finalize_trace",
     )
 
     builder.add_edge(
         "retry_limit_reached",
-        END,
+        "finalize_trace",
     )
 
     builder.add_edge(
         "no_test_gaps",
-        END,
+        "finalize_trace",
     )
 
     builder.add_edge(
         "no_candidate_tests",
-        END,
+        "finalize_trace",
     )
 
     builder.add_edge(
         "no_changes",
+        "finalize_trace",
+    )
+
+    builder.add_edge(
+        "finalize_trace",
         END,
     )
 
