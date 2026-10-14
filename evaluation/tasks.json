@@ -1,0 +1,277 @@
+[
+  {
+    "id": "basic_candidate_pass",
+    "description": "Detect a missing test for a new calculator operation and pass on the first execution.",
+    "repository": {
+      "file_path": "calculator.py",
+      "initial_content": "def add(a, b):\n    return a + b\n",
+      "staged_content": "def add(a, b):\n    return a + b\n\n\ndef multiply(a, b):\n    return a * b\n"
+    },
+    "expected_test_gap": true,
+    "expected_final_status": "approved_tests_applied",
+    "expected_candidate_contains": "multiply(2, 3) == 6",
+    "max_retries": 3,
+    "approval": true,
+    "analysis_response": {
+      "risk_level": "medium",
+      "risky_files": [
+        "calculator.py"
+      ],
+      "test_gaps": [
+        "The new multiply function has no test coverage."
+      ],
+      "summary": "A new arithmetic operation was added without a corresponding test."
+    },
+    "candidate_responses": [
+      {
+        "candidate_tests": [
+          {
+            "file_path": "tests/test_calculator.py",
+            "target_file": "calculator.py",
+            "rationale": "Verify the newly added multiply behavior.",
+            "code": "from calculator import multiply\n\n\ndef test_multiply():\n    assert multiply(2, 3) == 6\n"
+          }
+        ]
+      }
+    ],
+    "runner_results": [
+      {
+        "success": true,
+        "exit_code": 0,
+        "stdout": "1 passed",
+        "stderr": "",
+        "timed_out": false
+      }
+    ]
+  },
+  {
+    "id": "replan_after_failure",
+    "description": "Detect a missing discount test, fail once, replan, and then pass.",
+    "repository": {
+      "file_path": "pricing.py",
+      "initial_content": "def total(price):\n    return price\n",
+      "staged_content": "def total(price, discount=0):\n    return price - discount\n"
+    },
+    "expected_test_gap": true,
+    "expected_final_status": "approved_tests_applied",
+    "expected_candidate_contains": "total(100, 10) == 90",
+    "max_retries": 3,
+    "approval": true,
+    "analysis_response": {
+      "risk_level": "high",
+      "risky_files": [
+        "pricing.py"
+      ],
+      "test_gaps": [
+        "Discount behavior is not covered by a test."
+      ],
+      "summary": "Pricing behavior changed by introducing discount handling."
+    },
+    "candidate_responses": [
+      {
+        "candidate_tests": [
+          {
+            "file_path": "tests/test_pricing.py",
+            "target_file": "pricing.py",
+            "rationale": "Test discount calculation.",
+            "code": "from pricing import total\n\n\ndef test_discount():\n    assert total(100, 10) == 100\n"
+          }
+        ]
+      },
+      {
+        "candidate_tests": [
+          {
+            "file_path": "tests/test_pricing.py",
+            "target_file": "pricing.py",
+            "rationale": "Correct the expected discounted total after observing the failed assertion.",
+            "code": "from pricing import total\n\n\ndef test_discount():\n    assert total(100, 10) == 90\n"
+          }
+        ]
+      }
+    ],
+    "runner_results": [
+      {
+        "success": false,
+        "exit_code": 1,
+        "stdout": "AssertionError: assert 90 == 100",
+        "stderr": "",
+        "timed_out": false
+      },
+      {
+        "success": true,
+        "exit_code": 0,
+        "stdout": "1 passed",
+        "stderr": "",
+        "timed_out": false
+      }
+    ]
+  },
+  {
+    "id": "no_test_gap_refactor",
+    "description": "A small refactor is expected not to require a new candidate test.",
+    "repository": {
+      "file_path": "formatter.py",
+      "initial_content": "def clean(value):\n    return value.strip()\n",
+      "staged_content": "def clean(value):\n    cleaned = value.strip()\n    return cleaned\n"
+    },
+    "expected_test_gap": false,
+    "expected_final_status": "analysis_complete",
+    "expected_candidate_contains": null,
+    "max_retries": 3,
+    "approval": false,
+    "analysis_response": {
+      "risk_level": "low",
+      "risky_files": [],
+      "test_gaps": [],
+      "summary": "The refactor preserves the existing observable behavior."
+    },
+    "candidate_responses": [],
+    "runner_results": []
+  },
+  {
+    "id": "retry_limit_reached",
+    "description": "A candidate repeatedly fails and the workflow must stop after the configured retry limit.",
+    "repository": {
+      "file_path": "division.py",
+      "initial_content": "def divide(a, b):\n    return a / b\n",
+      "staged_content": "def divide(a, b):\n    if b == 0:\n        raise ValueError('division by zero')\n    return a / b\n"
+    },
+    "expected_test_gap": true,
+    "expected_final_status": "retry_limit_reached",
+    "expected_candidate_contains": "divide(4, 2)",
+    "max_retries": 2,
+    "approval": true,
+    "analysis_response": {
+      "risk_level": "high",
+      "risky_files": [
+        "division.py"
+      ],
+      "test_gaps": [
+        "Division behavior and zero handling require test coverage."
+      ],
+      "summary": "The function now contains a new error-handling branch."
+    },
+    "candidate_responses": [
+      {
+        "candidate_tests": [
+          {
+            "file_path": "tests/test_division.py",
+            "target_file": "division.py",
+            "rationale": "Test division behavior.",
+            "code": "from division import divide\n\n\ndef test_divide():\n    assert divide(4, 2) == 3\n"
+          }
+        ]
+      },
+      {
+        "candidate_tests": [
+          {
+            "file_path": "tests/test_division.py",
+            "target_file": "division.py",
+            "rationale": "Revise the division test after failure.",
+            "code": "from division import divide\n\n\ndef test_divide():\n    assert divide(4, 2) == 3\n"
+          }
+        ]
+      },
+      {
+        "candidate_tests": [
+          {
+            "file_path": "tests/test_division.py",
+            "target_file": "division.py",
+            "rationale": "Second revision after another failed execution.",
+            "code": "from division import divide\n\n\ndef test_divide():\n    assert divide(4, 2) == 3\n"
+          }
+        ]
+      }
+    ],
+    "runner_results": [
+      {
+        "success": false,
+        "exit_code": 1,
+        "stdout": "AssertionError",
+        "stderr": "",
+        "timed_out": false
+      },
+      {
+        "success": false,
+        "exit_code": 1,
+        "stdout": "AssertionError",
+        "stderr": "",
+        "timed_out": false
+      },
+      {
+        "success": false,
+        "exit_code": 1,
+        "stdout": "AssertionError",
+        "stderr": "",
+        "timed_out": false
+      }
+    ]
+  },
+  {
+    "id": "human_rejection",
+    "description": "A passing candidate reaches the approval gate but is rejected by the reviewer.",
+    "repository": {
+      "file_path": "tax.py",
+      "initial_content": "def calculate_tax(amount):\n    return amount * 0.05\n",
+      "staged_content": "def calculate_tax(amount):\n    if amount <= 0:\n        return 0\n    return amount * 0.05\n"
+    },
+    "expected_test_gap": true,
+    "expected_final_status": "approval_rejected",
+    "expected_candidate_contains": "calculate_tax(0) == 0",
+    "max_retries": 3,
+    "approval": false,
+    "analysis_response": {
+      "risk_level": "medium",
+      "risky_files": [
+        "tax.py"
+      ],
+      "test_gaps": [
+        "The new non-positive amount branch is not tested."
+      ],
+      "summary": "Tax calculation gained a new boundary condition."
+    },
+    "candidate_responses": [
+      {
+        "candidate_tests": [
+          {
+            "file_path": "tests/test_tax.py",
+            "target_file": "tax.py",
+            "rationale": "Cover the new zero amount behavior.",
+            "code": "from tax import calculate_tax\n\n\ndef test_zero_tax():\n    assert calculate_tax(0) == 0\n"
+          }
+        ]
+      }
+    ],
+    "runner_results": [
+      {
+        "success": true,
+        "exit_code": 0,
+        "stdout": "1 passed",
+        "stderr": "",
+        "timed_out": false
+      }
+    ]
+  },
+  {
+    "id": "documentation_only_change",
+    "description": "A documentation-only staged change should not create a test gap.",
+    "repository": {
+      "file_path": "README.md",
+      "initial_content": "# Example Project\n\nInitial documentation.\n",
+      "staged_content": "# Example Project\n\nInitial documentation.\n\nAdded installation notes.\n"
+    },
+    "expected_test_gap": false,
+    "expected_final_status": "analysis_complete",
+    "expected_candidate_contains": null,
+    "max_retries": 3,
+    "approval": false,
+    "analysis_response": {
+      "risk_level": "low",
+      "risky_files": [],
+      "test_gaps": [],
+      "summary": "The staged change modifies documentation only."
+    },
+    "candidate_responses": [],
+    "runner_results": []
+  }
+]

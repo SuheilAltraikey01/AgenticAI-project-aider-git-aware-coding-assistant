@@ -563,6 +563,31 @@ AgenticAI-project-aider-git-aware-coding-assistant/
 |       results, retries, approval decisions, applied files,
 |       timestamps, and final status while avoiding storage of
 |       the raw staged Git diff.
+|-- evaluation/
+|   Controlled evaluation and metric calculation components.
+|   |
+|   |-- __init__.py
+|   |
+|   |-- harness.py
+|   |   Creates temporary controlled Git repositories, injects
+|   |   deterministic LLM, test-runner, approval, and application
+|   |   behavior, executes the full agent workflow, and calculates
+|   |   reproducible evaluation metrics.
+|   |
+|   `-- run_evaluation.py
+|       Command-line entry point for running the controlled offline
+|       evaluation suite and writing the detailed JSON result report.
+|   Controlled academic evaluation assets.
+|   |
+|   |-- tasks.json
+|   |   Defines six reproducible Git-diff scenarios with expected
+|   |   test-gap decisions, candidate behavior, execution outcomes,
+|   |   approval decisions, retry limits, and terminal states.
+|   |
+|   `-- results/
+|       Contains generated evaluation reports. JSON result files are
+|       excluded from Git and can be reproduced with the evaluation
+|       command documented in this README.
 |
 `-- tests/
     |
@@ -651,7 +676,10 @@ AgenticAI-project-aider-git-aware-coding-assistant/
     |-- test_execution_trace.py
     |   Tests that a complete LangGraph workflow produces an
     |   inspectable JSON event trace.   
-    
+    |-- test_evaluation_harness.py
+    |     Tests the controlled task set, deterministic evaluation metrics,
+    |   expected terminal states, and retry-limit coverage.
+
 ## 11. Limitations
 
 The current project scope is deliberately bounded.
@@ -688,7 +716,7 @@ The project is an academic prototype inspired by Aider and does not attempt to r
 - [x] Phase 10 - Bounded retry and replanning loop
 - [x] Phase 11 - Human approval gate
 - [x] Phase 12 - JSON execution traces
-- [ ] Phase 13 - Evaluation harness and task set
+- [x] Phase 13 - Evaluation harness and task set
 - [ ] Phase 14 - Failure and recovery scenarios
 - [ ] Phase 15 - Cost and latency evaluation
 - [ ] Phase 16 - Final documentation and demonstration
@@ -860,15 +888,43 @@ The trace records the major observable workflow events, including:
 - applied candidate files
 - final workflow status
 
-Each event includes a UTC timestamp and structured details.
+## Evaluation
 
-The raw staged Git diff is not copied into the trace. Instead, the trace
-stores the staged file names, diff character count, and a SHA-256 digest.
-This reduces unnecessary duplication of source code or potentially
-sensitive content in logs.
+The project includes a reproducible controlled evaluation harness for
+testing the bounded agent workflow without requiring an external API or
+network connection.
 
-Generated candidate tests and bounded pytest output are retained because
-they are needed to inspect and explain the agent's decisions.
+The evaluation task set currently contains six controlled Git scenarios
+covering:
 
-Trace files are local development artifacts and are excluded from Git by
-`.gitignore`.
+- a missing test detected and passed on the first execution
+- a failed candidate test followed by successful replanning
+- a low-risk refactor with no expected test gap
+- repeated test failure followed by retry-limit termination
+- a passing candidate rejected by the human approval gate
+- a documentation-only change with no expected test gap
+
+The deterministic evaluation uses `FakeLlmClient`, predefined execution
+results, a controlled approval decision, and temporary Git repositories.
+
+This allows the workflow, retry logic, stopping behavior, approval logic,
+and evaluation calculations to be reproduced without API access.
+
+### Reproduce the Offline Evaluation
+
+Run:
+
+```powershell
+$env:PYTHONPATH="src"
+python -m aider_agent.evaluation.run_evaluation
+
+=== Aider Offline Evaluation ===
+Tasks: 6
+Test-gap detection rate: 100.0%
+False-positive rate: 0.0%
+Candidate quality proxy: 100.0%
+Convergence rate: 75.0%
+Final-status accuracy: 100.0%
+Average retry count: 0.75
+Average retries to convergence: 0.33
+Retry-limit cases: 1
