@@ -1,0 +1,267 @@
+[
+  {
+    "id": "timeout_then_recover",
+    "description": "The first candidate execution times out, the agent replans, and the revised candidate passes.",
+    "repository": {
+      "file_path": "normalizer.py",
+      "initial_content": "def normalize(value):\n    return value.strip()\n",
+      "staged_content": "def normalize(value):\n    return value.strip().lower()\n"
+    },
+    "max_retries": 3,
+    "approval": true,
+    "expected_final_status": "approved_tests_applied",
+    "expected_retry_count": 1,
+    "expected_test_success": true,
+    "analysis_response": {
+      "risk_level": "medium",
+      "risky_files": [
+        "normalizer.py"
+      ],
+      "test_gaps": [
+        "Lowercase normalization behavior is not tested."
+      ],
+      "summary": "Normalization now strips whitespace and converts text to lowercase."
+    },
+    "candidate_responses": [
+      {
+        "candidate_tests": [
+          {
+            "file_path": "tests/test_normalizer.py",
+            "target_file": "normalizer.py",
+            "rationale": "Test the changed normalization behavior.",
+            "code": "from normalizer import normalize\n\n\ndef test_normalize():\n    assert normalize(' A ') == 'A'\n"
+          }
+        ]
+      },
+      {
+        "candidate_tests": [
+          {
+            "file_path": "tests/test_normalizer.py",
+            "target_file": "normalizer.py",
+            "rationale": "Revise the candidate after the previous execution timed out.",
+            "code": "from normalizer import normalize\n\n\ndef test_normalize():\n    assert normalize(' A ') == 'a'\n"
+          }
+        ]
+      }
+    ],
+    "runner_results": [
+      {
+        "success": false,
+        "exit_code": null,
+        "stdout": "",
+        "stderr": "",
+        "timed_out": true
+      },
+      {
+        "success": true,
+        "exit_code": 0,
+        "stdout": "1 passed",
+        "stderr": "",
+        "timed_out": false
+      }
+    ]
+  },
+  {
+    "id": "retry_limit_reached",
+    "description": "Candidate tests continue failing until the configured retry limit is reached.",
+    "repository": {
+      "file_path": "division.py",
+      "initial_content": "def divide(a, b):\n    return a / b\n",
+      "staged_content": "def divide(a, b):\n    if b == 0:\n        raise ValueError('division by zero')\n    return a / b\n"
+    },
+    "max_retries": 2,
+    "approval": true,
+    "expected_final_status": "retry_limit_reached",
+    "expected_retry_count": 2,
+    "expected_test_success": false,
+    "analysis_response": {
+      "risk_level": "high",
+      "risky_files": [
+        "division.py"
+      ],
+      "test_gaps": [
+        "The new zero-division branch requires test coverage."
+      ],
+      "summary": "Division now contains a new exception-handling branch."
+    },
+    "candidate_responses": [
+      {
+        "candidate_tests": [
+          {
+            "file_path": "tests/test_division.py",
+            "target_file": "division.py",
+            "rationale": "Test the modified division behavior.",
+            "code": "from division import divide\n\n\ndef test_divide():\n    assert divide(4, 2) == 3\n"
+          }
+        ]
+      },
+      {
+        "candidate_tests": [
+          {
+            "file_path": "tests/test_division.py",
+            "target_file": "division.py",
+            "rationale": "First revision after failure.",
+            "code": "from division import divide\n\n\ndef test_divide():\n    assert divide(4, 2) == 3\n"
+          }
+        ]
+      },
+      {
+        "candidate_tests": [
+          {
+            "file_path": "tests/test_division.py",
+            "target_file": "division.py",
+            "rationale": "Second revision after another failure.",
+            "code": "from division import divide\n\n\ndef test_divide():\n    assert divide(4, 2) == 3\n"
+          }
+        ]
+      }
+    ],
+    "runner_results": [
+      {
+        "success": false,
+        "exit_code": 1,
+        "stdout": "AssertionError",
+        "stderr": "",
+        "timed_out": false
+      },
+      {
+        "success": false,
+        "exit_code": 1,
+        "stdout": "AssertionError",
+        "stderr": "",
+        "timed_out": false
+      },
+      {
+        "success": false,
+        "exit_code": 1,
+        "stdout": "AssertionError",
+        "stderr": "",
+        "timed_out": false
+      }
+    ]
+  },
+  {
+    "id": "no_candidate_generated",
+    "description": "The analysis identifies a test gap but the LLM cannot produce a useful candidate test.",
+    "repository": {
+      "file_path": "validator.py",
+      "initial_content": "def valid(value):\n    return bool(value)\n",
+      "staged_content": "def valid(value):\n    return isinstance(value, str) and bool(value.strip())\n"
+    },
+    "max_retries": 3,
+    "approval": true,
+    "expected_final_status": "no_candidate_tests",
+    "expected_retry_count": 0,
+    "analysis_response": {
+      "risk_level": "medium",
+      "risky_files": [
+        "validator.py"
+      ],
+      "test_gaps": [
+        "Whitespace-only input behavior is not tested."
+      ],
+      "summary": "Validation behavior became more restrictive."
+    },
+    "candidate_responses": [
+      {
+        "candidate_tests": []
+      }
+    ],
+    "runner_results": []
+  },
+  {
+    "id": "human_rejection",
+    "description": "A candidate passes execution but the human explicitly rejects it.",
+    "repository": {
+      "file_path": "tax.py",
+      "initial_content": "def calculate_tax(amount):\n    return amount * 0.05\n",
+      "staged_content": "def calculate_tax(amount):\n    if amount <= 0:\n        return 0\n    return amount * 0.05\n"
+    },
+    "max_retries": 3,
+    "approval": false,
+    "expected_final_status": "approval_rejected",
+    "expected_retry_count": 0,
+    "expected_test_success": true,
+    "analysis_response": {
+      "risk_level": "medium",
+      "risky_files": [
+        "tax.py"
+      ],
+      "test_gaps": [
+        "The new non-positive amount branch is not tested."
+      ],
+      "summary": "Tax calculation gained a new boundary condition."
+    },
+    "candidate_responses": [
+      {
+        "candidate_tests": [
+          {
+            "file_path": "tests/test_tax.py",
+            "target_file": "tax.py",
+            "rationale": "Test the new zero amount branch.",
+            "code": "from tax import calculate_tax\n\n\ndef test_zero_tax():\n    assert calculate_tax(0) == 0\n"
+          }
+        ]
+      }
+    ],
+    "runner_results": [
+      {
+        "success": true,
+        "exit_code": 0,
+        "stdout": "1 passed",
+        "stderr": "",
+        "timed_out": false
+      }
+    ]
+  },
+  {
+    "id": "malformed_analysis_json",
+    "description": "Malformed structured output from the LLM is rejected before candidate generation or execution.",
+    "repository": {
+      "file_path": "calculator.py",
+      "initial_content": "def add(a, b):\n    return a + b\n",
+      "staged_content": "def add(a, b):\n    result = a + b\n    return result\n"
+    },
+    "max_retries": 3,
+    "approval": false,
+    "expected_exception": "ValueError",
+    "analysis_raw": "{ this is not valid JSON",
+    "candidate_responses": [],
+    "runner_results": []
+  },
+  {
+    "id": "unsafe_candidate_path",
+    "description": "A generated candidate attempting path traversal is rejected before test execution.",
+    "repository": {
+      "file_path": "account.py",
+      "initial_content": "def active(value):\n    return value\n",
+      "staged_content": "def active(value):\n    return bool(value)\n"
+    },
+    "max_retries": 3,
+    "approval": false,
+    "expected_exception": "ValueError",
+    "analysis_response": {
+      "risk_level": "medium",
+      "risky_files": [
+        "account.py"
+      ],
+      "test_gaps": [
+        "Boolean conversion behavior needs a test."
+      ],
+      "summary": "The function now normalizes values to booleans."
+    },
+    "candidate_responses": [
+      {
+        "candidate_tests": [
+          {
+            "file_path": "tests/../../danger.py",
+            "target_file": "account.py",
+            "rationale": "Unsafe path traversal example.",
+            "code": "def test_example():\n    assert True\n"
+          }
+        ]
+      }
+    ],
+    "runner_results": []
+  }
+]
