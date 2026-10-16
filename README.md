@@ -433,6 +433,69 @@ Malformed or unsafe structured output currently fails closed with
 `ValueError`. It is rejected before test execution or file application.
 
 ---
+## Live DeepSeek Evaluation
+
+The deterministic evaluations above test the controller and workflow without
+network access. A separate live benchmark was also run with the real DeepSeek
+provider to measure model behavior, latency, token usage, and estimated cost.
+
+Run:
+
+```powershell
+$env:PYTHONPATH="src"
+python -m aider_agent.evaluation.run_live_benchmark
+```
+
+The benchmark uses the same six controlled Git tasks but replaces the fake LLM
+with the real DeepSeek API.
+
+Observed result:
+
+```text
+Completed tasks: 6
+Benchmark errors: 0
+Test-gap detection rate: 100.0%
+False-positive rate: 50.0%
+
+LLM calls: 12
+
+Prompt tokens: 5837
+Cache-hit prompt tokens: 896
+Cache-miss prompt tokens: 4941
+Output tokens: 3570
+Total tokens: 9407
+
+Total LLM latency: 22.79s
+Average LLM-call latency: 1.90s
+
+Total workflow latency: 38.80s
+Average workflow latency: 6.47s
+
+Estimated off-peak cost: $0.002886
+Estimated peak cost: $0.005772
+```
+
+The live run completed all six tasks without API or workflow errors.
+
+The 100% test-gap detection rate shows that all controlled positive cases were
+identified. However, the 50% false-positive rate shows that the model also
+reported a test gap for one of the two controlled negative cases.
+
+This is an important limitation: the current agent favors detecting possible
+missing tests, which can cause unnecessary test-generation work on some
+low-risk changes.
+
+Cost values are estimates based on API-reported token usage and the pricing
+snapshot used by the evaluation code. They are not billing records.
+
+Live benchmark reports are written to:
+
+```text
+evaluation/results/live_latest.json
+```
+
+Generated reports are excluded from Git.
+---
 
 ## Repository Structure
 
@@ -450,6 +513,23 @@ AgenticAI-project-aider-git-aware-coding-assistant/
 |   |-- failure_scenarios.json
 |   `-- results/
 |       Generated evaluation reports (ignored by Git)
+|       `-- evaluation/
+|           |-- harness.py
+|           |   Runs the deterministic controlled evaluation.
+|           |
+|           |-- run_evaluation.py
+|           |   Command-line entry point for the offline evaluation.
+|           |
+|           |-- run_failure_scenarios.py
+|           |   Runs controlled failure and recovery scenarios.
+|           |
+|           |-- cost_latency.py
+|           |   Calculates token usage, API latency, and estimated
+|           |   DeepSeek request cost.
+|           |
+|           `-- run_live_benchmark.py
+|               Runs the controlled tasks with the real DeepSeek API
+|               and measures semantic results, latency, and cost.
 |
 |-- src/
 |   `-- aider_agent/
@@ -507,6 +587,11 @@ AgenticAI-project-aider-git-aware-coding-assistant/
     |-- test_execution_trace.py
     |-- test_evaluation_harness.py
     `-- test_failure_recovery_scenarios.py
+    |-- test_cost_latency_metrics.py
+    |   Tests deterministic cost, token, and latency calculations.
+    |
+    |-- test_deepseek_usage_tracking.py
+    |   Tests DeepSeek usage instrumentation without network access.
 ```
 
 ---
@@ -566,7 +651,7 @@ Important limitations:
 [x] Phase 12 - JSON execution traces
 [x] Phase 13 - Evaluation harness and task set
 [x] Phase 14 - Failure and recovery scenarios
-[ ] Phase 15 - Cost and latency evaluation
+[x] Phase 15 - Cost and latency evaluation
 [ ] Phase 16 - Final documentation and demonstration
 ```
 
